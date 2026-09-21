@@ -2262,6 +2262,15 @@ textarea.form-control {
   }
 }
 
+@media (max-width: 768px){
+  .nav-title, .live-clock-badge {
+    display: none;
+  }
+    .sidebar-menu{
+      overflow-y: auto;
+    }
+}
+
 /* Mobile sidebar (Next.js shell) */
 @media (max-width: 960px) {
   .sidebar {
