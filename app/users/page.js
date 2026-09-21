@@ -99,6 +99,13 @@ export default function UsersPage() {
     setOpen(true);
   }
 
+  const managerOptions = useMemo(() => {
+    return rows
+      .filter((u) => (u.status || '') === 'Active' && Number(u.id) !== Number(editingId))
+      .slice()
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  }, [rows, editingId]);
+
   async function submit(e) {
     e.preventDefault();
     setSaving(true);
@@ -309,7 +316,21 @@ export default function UsersPage() {
           <div className="form-grid-2">
             <div className="form-group">
               <label>Manager</label>
-              <input className="form-control" value={form.manager} onChange={(e) => setForm((f) => ({ ...f, manager: e.target.value }))} />
+              <select
+                className="form-control form-control-select"
+                value={form.manager}
+                onChange={(e) => setForm((f) => ({ ...f, manager: e.target.value }))}
+              >
+                <option value="">Select manager</option>
+                {managerOptions.map((u) => (
+                  <option key={u.id} value={u.name}>
+                    {u.name} ({u.email})
+                  </option>
+                ))}
+                {form.manager && !managerOptions.some((u) => u.name === form.manager) ? (
+                  <option value={form.manager}>{form.manager} (current)</option>
+                ) : null}
+              </select>
             </div>
             <div className="form-group">
               <label>Phone</label>
