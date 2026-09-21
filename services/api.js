@@ -146,6 +146,9 @@ export const logsApi = {
 export const settingsApi = {
   get: () => api('/api/settings'),
   update: (body) => api('/api/settings', { method: 'PUT', body }),
+  getSmtp: () => api('/api/settings/smtp'),
+  updateSmtp: (body) => api('/api/settings/smtp', { method: 'PUT', body }),
+  testSmtp: (to) => api('/api/settings/smtp/test', { method: 'POST', body: { to } }),
 };
 export const catalogApi = {
   list: (type) => api(`/api/catalog${type ? `?type=${encodeURIComponent(type)}` : ''}`),

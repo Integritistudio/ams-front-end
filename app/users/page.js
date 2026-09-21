@@ -125,8 +125,16 @@ export default function UsersPage() {
 
   async function sendSetup(id) {
     try {
-      await usersApi.sendPasswordSetup(id);
-      showToast('Email Sent', 'Password setup link sent to user.', 'success');
+      const res = await usersApi.sendPasswordSetup(id);
+      if (res.data?.delivered === false || res.data?.logged) {
+        showToast(
+          'SMTP not configured',
+          res.message || 'No email was sent. Check the backend console for the password setup link.',
+          'warning'
+        );
+      } else {
+        showToast('Email Sent', res.message || 'Password setup link sent to user.', 'success');
+      }
     } catch (err) {
       showToast('Error', err.message || 'Could not send setup email', 'error');
     }
