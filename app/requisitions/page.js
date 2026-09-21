@@ -74,7 +74,6 @@ function RequisitionsPageInner() {
   useEffect(() => {
     if (!hasPermission('requisitions')) return;
     load();
-    usersApi.directory().then((res) => setApprovers(res.data || [])).catch(() => {});
     departmentsApi.list().then((res) => {
       const list = (res.data || []).map((d) => d.name || d).filter(Boolean);
       setDepartments(list);
@@ -83,8 +82,7 @@ function RequisitionsPageInner() {
 
   useEffect(() => {
     if (searchParams.get('create') === '1' && hasPermission('requisitions')) {
-      setForm({ ...emptyForm, department: user?.department || '' });
-      setCreateOpen(true);
+      openCreateModal();
       router.replace('/requisitions');
     }
   }, [searchParams, hasPermission, user, router]);
@@ -100,6 +98,17 @@ function RequisitionsPageInner() {
     }).catch(() => setCatalog([]));
   }, [createOpen, form.type]);
 
+  async function openCreateModal() {
+    setForm({ ...emptyForm, department: user?.department || '' });
+    setCreateOpen(true);
+    try {
+      const res = await usersApi.directory();
+      setApprovers(res.data || []);
+    } catch (err) {
+      setApprovers([]);
+      showToast('Error', err.message || 'Could not load approvers', 'error');
+    }
+  }
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
@@ -204,10 +213,7 @@ function RequisitionsPageInner() {
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => {
-            setForm({ ...emptyForm, department: user?.department || '' });
-            setCreateOpen(true);
-          }}
+          onClick={() => openCreateModal()}
         >
           <i className="fa-solid fa-plus" /><span>New Asset Request</span>
         </button>
