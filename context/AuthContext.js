@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { authApi, setToken } from '../services/api';
 import { clearLoginNoticeFlag } from '../lib/loginNotice';
+import { startShift, pauseShift } from '../lib/shiftHours';
 
 const AuthContext = createContext(null);
 
@@ -24,8 +25,19 @@ export function AuthProvider({ children }) {
     try {
       const res = await authApi.me();
       applyAuth(res.data);
+      if (res.data?.user?.email) startShift(res.data.user.email);
       return res.data;
     } catch (_e) {
+      const email = typeof window !== 'undefined'
+        ? (() => {
+          try {
+            return JSON.parse(localStorage.getItem('integriti_last_user_email') || 'null');
+          } catch {
+            return null;
+          }
+        })()
+        : null;
+      if (email) pauseShift(email);
       setToken(null);
       applyAuth(null);
       return null;
@@ -46,10 +58,26 @@ export function AuthProvider({ children }) {
     setToken(res.data.token);
     clearLoginNoticeFlag();
     applyAuth(res.data);
+    const userEmail = res.data?.user?.email || email;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('integriti_last_user_email', JSON.stringify(userEmail));
+    }
+    startShift(userEmail);
     return res.data;
   }, [applyAuth]);
 
   const logout = useCallback(async () => {
+    const email = user?.email
+      || (typeof window !== 'undefined'
+        ? (() => {
+          try {
+            return JSON.parse(localStorage.getItem('integriti_last_user_email') || 'null');
+          } catch {
+            return null;
+          }
+        })()
+        : null);
+    if (email) pauseShift(email);
     try {
       await authApi.logout();
     } catch (_e) {
@@ -58,7 +86,7 @@ export function AuthProvider({ children }) {
     setToken(null);
     clearLoginNoticeFlag();
     applyAuth(null);
-  }, [applyAuth]);
+  }, [applyAuth, user?.email]);
 
   const hasPermission = useCallback(
     (slug) => permissions.includes(slug),

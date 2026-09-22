@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext';
 import { notificationsApi } from '../services/api';
 import DataLoader from './DataLoader';
 import LoginNoticeModal from './LoginNoticeModal';
+import { startShift, pauseShift, getShiftElapsedMs, formatShiftHours } from '../lib/shiftHours';
 const NAV_ITEMS = [
   { href: '/dashboard', slug: 'dashboard', label: 'Home Dashboard', icon: 'fa-house' },
   { href: '/tickets', slug: 'tickets', label: 'My Tickets', icon: 'fa-ticket', adminLabel: 'All Tickets' },
@@ -42,7 +43,6 @@ export default function AppShell({ children, title, subtitle, actions }) {
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [clock, setClock] = useState('');
   const [theme, setTheme] = useState('dark');
-  const [shiftStart] = useState(() => Date.now());
 
   useEffect(() => {
     if (!loading && !isAuthenticated) router.replace('/login');
@@ -55,16 +55,28 @@ export default function AppShell({ children, title, subtitle, actions }) {
   }, []);
 
   useEffect(() => {
+    if (!isAuthenticated || !user?.email) return;
+    startShift(user.email);
+    localStorage.setItem('integriti_last_user_email', JSON.stringify(user.email));
+
     const id = setInterval(() => {
       const now = new Date();
       const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const elapsedMs = Date.now() - shiftStart;
-      const hrs = Math.floor(elapsedMs / 3600000).toString().padStart(2, '0');
-      const mins = Math.floor((elapsedMs % 3600000) / 60000).toString().padStart(2, '0');
-      setClock(`${timeStr} (Shift: ${hrs}h ${mins}m)`);
+      const shiftLabel = formatShiftHours(getShiftElapsedMs(user.email));
+      setClock(`${timeStr} (Shift: ${shiftLabel})`);
     }, 1000);
-    return () => clearInterval(id);
-  }, [shiftStart]);
+
+    // Bank time if browser/tab is closing (session may still exist on reopen same day)
+    const onHide = () => pauseShift(user.email);
+    window.addEventListener('pagehide', onHide);
+    window.addEventListener('beforeunload', onHide);
+
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('pagehide', onHide);
+      window.removeEventListener('beforeunload', onHide);
+    };
+  }, [isAuthenticated, user?.email]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
