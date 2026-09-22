@@ -17,16 +17,23 @@ function pid(r) {
 }
 
 export default function ApprovalsPage() {
-  const { hasPermission, canViewAll, user } = useAuth();
+  const { hasPermission, user, role } = useAuth();
   const { showToast } = useToast();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [mineOnly, setMineOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState(null);
   const [open, setOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const isDesignatedApprover = Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
+  const canSeeAllPending =
+    Boolean(role?.is_it_admin) ||
+    Boolean(role?.is_approver) ||
+    Boolean(role?.is_executive);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -47,20 +54,31 @@ export default function ApprovalsPage() {
 
   const pending = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const myEmail = (user?.email || '').toLowerCase();
     return rows.filter((r) => {
       const status = (r.status || '').toLowerCase();
       if (!status.includes('pending')) return false;
-      const approverId = r.approver_id ?? r.approverId;
-      if (!canViewAll('approvals') && approverId && user?.id && Number(approverId) !== Number(user.id)) {
-        return false;
+      const requesterEmail = (r.requester_email || r.requesterEmail || '').toLowerCase();
+      if (!canSeeAllPending) {
+        if (!myEmail || requesterEmail !== myEmail) return false;
+      } else if (mineOnly) {
+        if (!myEmail || requesterEmail !== myEmail) return false;
       }
       if (!q) return true;
       const hay = [pid(r), r.item, r.requester_name || r.requesterName, r.project].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, search, canViewAll, user]);
+  }, [rows, search, canSeeAllPending, mineOnly, user?.email]);
 
   const pageRows = pending.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const canActOnDetail = Boolean(
+    detail &&
+    isDesignatedApprover &&
+    (detail.status || '').toLowerCase().includes('pending') &&
+    user?.id &&
+    Number(detail.approver_id ?? detail.approverId) === Number(user.id)
+  );
 
   async function openDetail(id) {
     try {
@@ -75,6 +93,19 @@ export default function ApprovalsPage() {
 
   async function act(action) {
     if (!detail) return;
+    if (!isDesignatedApprover) {
+      showToast(
+        'Not allowed',
+        'Only the designated Approver can approve or reject. IT Admin is view-only here.',
+        'warning'
+      );
+      return;
+    }
+    const approverId = detail.approver_id ?? detail.approverId;
+    if (!user?.id || Number(approverId) !== Number(user.id)) {
+      showToast('Not allowed', 'Only the assigned Approver can approve or reject this request.', 'warning');
+      return;
+    }
     setBusy(true);
     try {
       const id = pid(detail);
@@ -108,14 +139,23 @@ export default function ApprovalsPage() {
 
   if (!hasPermission('approvals')) {
     return (
-      <AppShell title="Approval Asset" subtitle="Review pending asset requisitions.">
-        <AccessDenied moduleName="Approvals" />
+      <AppShell title="Pending Approvals" subtitle="Review pending asset requisitions.">
+        <AccessDenied moduleName="Pending Approvals" />
       </AppShell>
     );
   }
 
   return (
-    <AppShell title="Approval Asset Desk" subtitle="Review pending requisitions and manage fulfillment.">
+    <AppShell
+      title="Pending Approvals"
+      subtitle={
+        isDesignatedApprover
+          ? 'Review pending requisitions and approve or reject.'
+          : canSeeAllPending
+            ? 'View all pending asset requisitions (approve/reject is Approver-only).'
+            : 'View your own pending asset requisitions.'
+      }
+    >
       <div className="metrics-grid">
         <div className="metric-card">
           <div className="metric-info"><h3>Pending Approvals</h3><div className="counter">{pending.length}</div></div>
@@ -126,6 +166,26 @@ export default function ApprovalsPage() {
       <div className="table-toolbar">
         <div className="toolbar-left"><h2>Pending Manager Approvals</h2></div>
         <div className="toolbar-controls-group">
+          {canSeeAllPending ? (
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                margin: 0,
+                fontSize: 13,
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={mineOnly}
+                onChange={(e) => { setMineOnly(e.target.checked); setPage(1); }}
+              />
+              My Pending Approvals
+            </label>
+          ) : null}
           <div className="search-box">
             <i className="fa-solid fa-magnifying-glass" />
             <input
@@ -193,12 +253,20 @@ export default function ApprovalsPage() {
         footer={(
           <>
             <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Close</button>
-            <button type="button" className="btn btn-danger" disabled={busy} onClick={() => act('reject')}>
-              <i className="fa-solid fa-xmark" /><span>Reject</span>
-            </button>
-            <button type="button" className="btn btn-success" disabled={busy} onClick={() => act('approve')}>
-              <i className="fa-solid fa-check" /><span>Approve</span>
-            </button>
+            {canActOnDetail ? (
+              <>
+                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => act('reject')}>
+                  <i className="fa-solid fa-xmark" /><span>Reject</span>
+                </button>
+                <button type="button" className="btn btn-success" disabled={busy} onClick={() => act('approve')}>
+                  <i className="fa-solid fa-check" /><span>Approve (Send to IT)</span>
+                </button>
+              </>
+            ) : detail && (detail.status || '').toLowerCase().includes('pending') ? (
+              <span style={{ fontSize: 13, color: 'var(--text-muted)', alignSelf: 'center' }}>
+                View only — only the Approver can approve or reject
+              </span>
+            ) : null}
           </>
         )}
       >

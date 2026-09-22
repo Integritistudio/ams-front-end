@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { authApi, setToken } from '../services/api';
+import { clearLoginNoticeFlag } from '../lib/loginNotice';
 
 const AuthContext = createContext(null);
 
@@ -43,6 +44,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     const res = await authApi.login(email, password);
     setToken(res.data.token);
+    clearLoginNoticeFlag();
     applyAuth(res.data);
     return res.data;
   }, [applyAuth]);
@@ -54,6 +56,7 @@ export function AuthProvider({ children }) {
       /* ignore */
     }
     setToken(null);
+    clearLoginNoticeFlag();
     applyAuth(null);
   }, [applyAuth]);
 

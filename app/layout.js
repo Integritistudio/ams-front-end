@@ -1,6 +1,7 @@
 import './globals.css';
 import { AuthProvider } from '../context/AuthContext';
 import { ToastProvider } from '../context/ToastContext';
+import { ApiLoadingProvider } from '../context/ApiLoadingContext';
 
 export const metadata = {
   title: 'Integriti IT Helpdesk',
@@ -12,7 +13,9 @@ export default function RootLayout({ children }) {
     <html lang="en" suppressHydrationWarning>
       <body>
         <AuthProvider>
-          <ToastProvider>{children}</ToastProvider>
+          <ToastProvider>
+            <ApiLoadingProvider>{children}</ApiLoadingProvider>
+          </ToastProvider>
         </AuthProvider>
       </body>
     </html>

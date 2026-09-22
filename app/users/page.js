@@ -110,7 +110,24 @@ export default function UsersPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      const body = { ...form, role_id: Number(form.role_id) };
+      const roleId = Number(form.role_id);
+      const role = roles.find((r) => Number(r.id) === roleId);
+      if (role && (role.is_it_admin || role.is_approver)) {
+        const kind = role.is_it_admin ? 'IT Admin' : 'Approver';
+        const occupied = rows.filter(
+          (u) => Number(u.role_id || u.roleId) === roleId && Number(u.id) !== Number(editingId)
+        );
+        if (occupied.length >= 1) {
+          showToast(
+            'Not allowed',
+            `${kind} role can only be assigned to one person (currently: ${occupied[0].name}). Change that user's role first.`,
+            'warning'
+          );
+          setSaving(false);
+          return;
+        }
+      }
+      const body = { ...form, role_id: roleId };
       if (editingId) await usersApi.update(editingId, body);
       else await usersApi.create(body);
       showToast('Saved', editingId ? 'User updated.' : 'User created.', 'success');
@@ -293,7 +310,32 @@ export default function UsersPage() {
           <div className="form-grid-2">
             <div className="form-group">
               <label>Role *</label>
-              <select className="form-control form-control-select" required value={form.role_id} onChange={(e) => setForm((f) => ({ ...f, role_id: e.target.value }))}>
+              <select
+                className="form-control form-control-select"
+                required
+                value={form.role_id}
+                onChange={(e) => {
+                  const roleId = e.target.value;
+                  const role = roles.find((r) => String(r.id) === String(roleId));
+                  if (role && (role.is_it_admin || role.is_approver)) {
+                    const kind = role.is_it_admin ? 'IT Admin' : 'Approver';
+                    const occupied = rows.filter(
+                      (u) =>
+                        Number(u.role_id || u.roleId) === Number(roleId) &&
+                        Number(u.id) !== Number(editingId)
+                    );
+                    if (occupied.length >= 1) {
+                      showToast(
+                        'Not allowed',
+                        `This role can only be assigned to one person (currently: ${occupied[0].name}).`,
+                        'warning'
+                      );
+                      return;
+                    }
+                  }
+                  setForm((f) => ({ ...f, role_id: roleId }));
+                }}
+              >
                 <option value="">Select role</option>
                 {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>

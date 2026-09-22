@@ -22,7 +22,7 @@ const HUB_TILES = [
   {
     href: '/requisitions',
     slug: 'requisitions',
-    title: 'New Asset Request',
+    title: 'Asset Requests',
     desc: 'Requisition hardware equipment or software licenses with management approval.',
     icon: 'fa-laptop',
     color: 'rgba(16,185,129,0.15)',
@@ -31,7 +31,7 @@ const HUB_TILES = [
   {
     href: '/approvals',
     slug: 'approvals',
-    title: 'Approval Asset Desk',
+    title: 'Pending Approvals',
     desc: 'Review pending requisitions, approve for IT procurement, or manage fulfillment.',
     icon: 'fa-clipboard-check',
     color: 'rgba(245,158,11,0.15)',
@@ -143,7 +143,7 @@ export default function DashboardPage() {
           ) : null}
           {hasPermission('requisitions') ? (
             <button type="button" className="btn btn-primary" onClick={() => setReqDisclaimer(true)}>
-              <i className="fa-solid fa-plus" /><span>New Asset Request</span>
+              <i className="fa-solid fa-plus" /><span>New Request</span>
             </button>
           ) : null}
         </>

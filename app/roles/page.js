@@ -16,6 +16,9 @@ const emptyForm = {
   name: '',
   description: '',
   is_active: true,
+  is_it_admin: false,
+  is_approver: false,
+  is_executive: false,
 };
 
 export default function RolesPage() {
@@ -91,6 +94,9 @@ export default function RolesPage() {
       name: role.name || '',
       description: role.description || '',
       is_active: role.is_active !== false && role.isActive !== false,
+      is_it_admin: Boolean(role.is_it_admin),
+      is_approver: Boolean(role.is_approver),
+      is_executive: Boolean(role.is_executive),
     });
     setEditOpen(true);
     try {
@@ -211,6 +217,7 @@ export default function RolesPage() {
             <tr>
               <th>Role ID</th>
               <th>Name</th>
+              <th>Special</th>
               <th>Description</th>
               <th>Users</th>
               <th>Status</th>
@@ -219,14 +226,26 @@ export default function RolesPage() {
           </thead>
           <tbody>
             {loading ? (
-              <DataLoader colSpan={6} label="Loading roles..." />
+              <DataLoader colSpan={7} label="Loading roles..." />
             ) : pageRows.length === 0 ? (
-              <tr><td colSpan={6}><EmptyState text="No roles found." /></td></tr>
+              <tr><td colSpan={7}><EmptyState text="No roles found." /></td></tr>
             ) : (
               pageRows.map((r) => (
                 <tr key={r.id}>
                   <td><strong>#{r.id}</strong></td>
                   <td>{r.name}</td>
+                  <td>
+                    {r.is_it_admin ? (
+                      <span className="badge badge-info" style={{ marginRight: 4 }}>IT Admin</span>
+                    ) : null}
+                    {r.is_approver ? (
+                      <span className="badge badge-warning" style={{ marginRight: 4 }}>Approver</span>
+                    ) : null}
+                    {r.is_executive ? (
+                      <span className="badge badge-progress">Executive</span>
+                    ) : null}
+                    {!r.is_it_admin && !r.is_approver && !r.is_executive ? '—' : null}
+                  </td>
                   <td>{r.description || '—'}</td>
                   <td>{r.user_count ?? r.userCount ?? 0}</td>
                   <td>
@@ -289,6 +308,91 @@ export default function RolesPage() {
           <div className="form-group">
             <label>Description</label>
             <textarea className="form-control" rows={2} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+          </div>
+
+          <div
+            className="form-group"
+            style={{
+              background: 'rgba(37,99,235,0.06)',
+              border: '1px solid rgba(37,99,235,0.2)',
+              padding: 12,
+              borderRadius: 8,
+              marginBottom: 16,
+            }}
+          >
+            <label style={{ fontWeight: 700, color: 'var(--primary)', marginBottom: 8, display: 'block' }}>
+              Special role designation
+            </label>
+            <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.45 }}>
+              <strong>IT Admin</strong> and <strong>Approver</strong>: one role each, one user each.
+              <strong> Executive</strong>: can be enabled on multiple roles and assigned to many users (view all pending approvals, cannot approve).
+            </p>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.is_it_admin)}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    if (on) {
+                      const other = rows.find(
+                        (r) => r.is_it_admin && Number(r.id) !== Number(editingId)
+                      );
+                      if (other) {
+                        showToast(
+                          'Already enabled',
+                          `IT Admin is already enabled for role "${other.name}". It can only be enabled for one role.`,
+                          'warning'
+                        );
+                        return;
+                      }
+                    }
+                    setForm((f) => ({
+                      ...f,
+                      is_it_admin: on,
+                      is_approver: on ? false : f.is_approver,
+                    }));
+                  }}
+                />
+                <span><strong>IT Admin</strong> — ticket assignee; view all approvals</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.is_approver)}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    if (on) {
+                      const other = rows.find(
+                        (r) => r.is_approver && Number(r.id) !== Number(editingId)
+                      );
+                      if (other) {
+                        showToast(
+                          'Already enabled',
+                          `Approver is already enabled for role "${other.name}". It can only be enabled for one role.`,
+                          'warning'
+                        );
+                        return;
+                      }
+                    }
+                    setForm((f) => ({
+                      ...f,
+                      is_approver: on,
+                      is_it_admin: on ? false : f.is_it_admin,
+                    }));
+                  }}
+                />
+                <span><strong>Approver</strong> — approve / reject asset requests</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.is_executive)}
+                  onChange={(e) => setForm((f) => ({ ...f, is_executive: e.target.checked }))}
+                />
+                <span><strong>Executive</strong> — view all pending approvals (no approve)</span>
+              </label>
+            </div>
           </div>
 
           <div className="account-section-heading" style={{ marginTop: 8 }}>

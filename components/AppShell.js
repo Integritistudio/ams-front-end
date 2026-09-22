@@ -7,11 +7,12 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { notificationsApi } from '../services/api';
 import DataLoader from './DataLoader';
+import LoginNoticeModal from './LoginNoticeModal';
 const NAV_ITEMS = [
   { href: '/dashboard', slug: 'dashboard', label: 'Home Dashboard', icon: 'fa-house' },
   { href: '/tickets', slug: 'tickets', label: 'My Tickets', icon: 'fa-ticket', adminLabel: 'All Tickets' },
-  { href: '/requisitions', slug: 'requisitions', label: 'New Asset Request', icon: 'fa-cart-flatbed' },
-  { href: '/approvals', slug: 'approvals', label: 'Approval Asset', icon: 'fa-clipboard-check', badge: true },
+  { href: '/requisitions', slug: 'requisitions', label: 'Asset Requests', icon: 'fa-cart-flatbed' },
+  { href: '/approvals', slug: 'approvals', label: 'Pending Approvals', icon: 'fa-clipboard-check', badge: true },
   { href: '/my-assets', slug: 'my_assets', label: 'Assigned Assets', icon: 'fa-laptop-code' },
   { href: '/procurement', slug: 'procurement_log', label: 'Procurement Log', icon: 'fa-file-invoice-dollar' },
   { href: '/logs', slug: 'logs', label: 'My Logs', icon: 'fa-clock-rotate-left' },
@@ -262,6 +263,7 @@ export default function AppShell({ children, title, subtitle, actions }) {
           </div>
         </div>
       ) : null}
+      <LoginNoticeModal />
     </section>
   );
 }

@@ -2434,6 +2434,29 @@ textarea.form-control {
   border-bottom: none !important;
 }
 
+/* Global overlay for CRUD / API actions */
+.api-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 12, 24, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.api-loading-overlay__card {
+  min-width: 220px;
+  max-width: 90vw;
+  padding: 8px 12px;
+  border-radius: 16px;
+  background: var(--bg-card, rgba(20, 24, 36, 0.92));
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+}
+
 @keyframes dataLoaderSpin {
   to { transform: rotate(360deg); }
 }

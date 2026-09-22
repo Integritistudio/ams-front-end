@@ -16,15 +16,23 @@ function pid(a) {
   return a?.public_id || a?.publicId || a?.id;
 }
 
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 const emptyForm = {
   user_id: '',
+  employee_search: '',
+  employee_name: '',
+  department: '',
   user_email: '',
   asset_code: '',
   category: 'Hardware',
   name: '',
   brand: '',
+  description: '',
   serial_number: '',
-  assigned_date: new Date().toISOString().slice(0, 10),
+  assigned_date: '',
   note: '',
 };
 
@@ -74,47 +82,91 @@ export default function AssignAssetsPage() {
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  function openCreate() {
+  function applyEmployeeByName(nameVal) {
+    const name = String(nameVal || '').trim().toLowerCase();
+    const found = users.find((u) => String(u.name || '').toLowerCase() === name);
+    if (found) {
+      setForm((f) => ({
+        ...f,
+        employee_search: found.name,
+        employee_name: found.name,
+        department: found.department || '',
+        user_email: found.email || '',
+        user_id: found.id || '',
+      }));
+    } else {
+      setForm((f) => ({
+        ...f,
+        employee_search: nameVal,
+        employee_name: '',
+        department: '',
+        user_email: '',
+        user_id: '',
+      }));
+    }
+  }
+
+  async function openCreate() {
     setEditingId(null);
-    setForm(emptyForm);
+    let nextCode = 'AST-1';
+    try {
+      const res = await assetsApi.nextCode();
+      nextCode = res.data?.asset_code || nextCode;
+    } catch (_e) {
+      /* preview falls back; server still assigns on save */
+    }
+    setForm({ ...emptyForm, assigned_date: todayISO(), asset_code: nextCode });
     setOpen(true);
   }
 
   function openEdit(row) {
     setEditingId(pid(row));
+    const email = row.user_email || row.userEmail || '';
+    const emp = users.find((u) => String(u.email || '').toLowerCase() === String(email).toLowerCase());
     setForm({
-      user_id: row.user_id || row.userId || '',
-      user_email: row.user_email || row.userEmail || '',
+      user_id: row.user_id || row.userId || emp?.id || '',
+      employee_search: emp?.name || email,
+      employee_name: emp?.name || '',
+      department: emp?.department || row.department || '',
+      user_email: email,
       asset_code: row.asset_code || row.assetCode || '',
       category: row.category || 'Hardware',
       name: row.name || '',
       brand: row.brand || '',
+      description: row.description || '',
       serial_number: row.serial_number || row.serialNumber || '',
-      assigned_date: (row.assigned_date || row.assignedDate || '').toString().slice(0, 10),
-      note: row.note || row.description || '',
+      assigned_date: (row.assigned_date || row.assignedDate || todayISO()).toString().slice(0, 10),
+      note: row.note || '',
     });
     setOpen(true);
   }
 
-  function onUserChange(userId) {
-    const u = users.find((x) => String(x.id) === String(userId));
-    setForm((f) => ({
-      ...f,
-      user_id: userId,
-      user_email: u?.email || f.user_email,
-    }));
-  }
-
   async function submit(e) {
     e.preventDefault();
+    if (!form.user_email?.trim()) {
+      showToast('Required', 'Select a valid employee from the search list.', 'warning');
+      return;
+    }
     setSaving(true);
     try {
       const body = {
-        ...form,
         user_id: form.user_id ? Number(form.user_id) : undefined,
+        user_email: form.user_email.trim().toLowerCase(),
+        category: form.category,
+        name: form.name.trim(),
+        brand: form.brand.trim(),
+        description: form.description.trim(),
+        serial_number: form.serial_number.trim(),
+        assigned_date: form.assigned_date || todayISO(),
+        note: form.note.trim() || null,
       };
-      if (editingId) await assetsApi.update(editingId, body);
-      else await assetsApi.create(body);
+      // asset_code is auto-generated on create; keep existing on edit
+      if (editingId) {
+        body.asset_code = form.asset_code;
+        await assetsApi.update(editingId, body);
+      } else {
+        await assetsApi.create(body);
+      }
       showToast('Saved', editingId ? 'Asset assignment updated.' : 'Asset assigned.', 'success');
       setOpen(false);
       await load();
@@ -126,7 +178,7 @@ export default function AssignAssetsPage() {
   }
 
   async function remove(id) {
-    if (!window.confirm('Remove this asset assignment?')) return;
+    if (!window.confirm('Remove this asset assignment from user?')) return;
     try {
       await assetsApi.remove(id);
       showToast('Removed', 'Asset assignment deleted.', 'info');
@@ -175,6 +227,7 @@ export default function AssignAssetsPage() {
               <option value="All">All Categories</option>
               <option value="Hardware">Hardware</option>
               <option value="Software License">Software License</option>
+              <option value="Peripheral">Peripheral / Accessory</option>
             </select>
           </div>
         </div>
@@ -241,69 +294,145 @@ export default function AssignAssetsPage() {
 
       <Modal
         open={open}
-        title={editingId ? 'Edit Asset Assignment' : 'Assign Asset to User'}
-        icon="fa-box-open"
+        title={editingId ? 'Edit User Asset Assignment' : 'Assign Asset to User'}
+        icon="fa-laptop-medical"
         onClose={() => setOpen(false)}
+        maxWidth={720}
         footer={(
           <>
             <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button>
             <button type="submit" form="assignForm" className="btn btn-primary" disabled={saving}>
-              <i className="fa-solid fa-floppy-disk" /><span>{saving ? 'Saving...' : 'Save Assignment'}</span>
+              <i className="fa-solid fa-floppy-disk" />
+              <span>{saving ? 'Saving...' : 'Save Asset Assignment'}</span>
             </button>
           </>
         )}
       >
         <form id="assignForm" onSubmit={submit} autoComplete="off">
-          <div className="form-group">
-            <label>Employee *</label>
-            <select
-              className="form-control form-control-select"
-              required
-              value={form.user_id}
-              onChange={(e) => onUserChange(e.target.value)}
-            >
-              <option value="">Select employee</option>
-              {users.filter((u) => u.status === 'Active').map((u) => (
-                <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
-              ))}
-            </select>
-          </div>
           <div className="form-grid-2">
             <div className="form-group">
-              <label>Asset Code *</label>
-              <input className="form-control" required value={form.asset_code} onChange={(e) => setForm((f) => ({ ...f, asset_code: e.target.value }))} />
+              <label>Search & Enter Employee Name *</label>
+              <input
+                className="form-control"
+                required
+                list="assignEmployeeDatalist"
+                placeholder="Type employee name..."
+                value={form.employee_search}
+                onChange={(e) => applyEmployeeByName(e.target.value)}
+              />
+              <datalist id="assignEmployeeDatalist">
+                {users.filter((u) => (u.status || 'Active') === 'Active').map((u) => (
+                  <option key={u.id || u.email} value={u.name}>
+                    {u.email}
+                  </option>
+                ))}
+              </datalist>
+            </div>
+            <div className="form-group">
+              <label>Employee Name</label>
+              <input className="form-control" readOnly value={form.employee_name} />
+            </div>
+          </div>
+
+          <div className="form-grid-2">
+            <div className="form-group">
+              <label>Department (Auto-filled)</label>
+              <input className="form-control" readOnly value={form.department} />
+            </div>
+            <div className="form-group">
+              <label>Employee Email</label>
+              <input type="email" className="form-control" readOnly value={form.user_email} />
+            </div>
+          </div>
+
+          <div className="form-grid-2">
+            <div className="form-group">
+              <label>Unique Asset Code / ID *</label>
+              <input
+                className="form-control"
+                required
+                readOnly
+                value={form.asset_code}
+                placeholder="Auto: AST-1, AST-2…"
+              />
             </div>
             <div className="form-group">
               <label>Category *</label>
-              <select className="form-control form-control-select" value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}>
+              <select
+                className="form-control form-control-select"
+                required
+                value={form.category}
+                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+              >
                 <option value="Hardware">Hardware</option>
                 <option value="Software License">Software License</option>
+                <option value="Peripheral">Peripheral / Accessory</option>
               </select>
             </div>
           </div>
+
           <div className="form-grid-2">
             <div className="form-group">
-              <label>Item Name *</label>
-              <input className="form-control" required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              <label>Item / Asset Name *</label>
+              <input
+                className="form-control"
+                required
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
             </div>
             <div className="form-group">
-              <label>Brand</label>
-              <input className="form-control" value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} />
+              <label>Brand / Model *</label>
+              <input
+                className="form-control"
+                required
+                value={form.brand}
+                onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))}
+              />
             </div>
           </div>
+
+          <div className="form-group">
+            <label>Asset Description / Specifications *</label>
+            <input
+              className="form-control"
+              required
+              placeholder="e.g. Dell Latitude 5420 Core i7 16GB RAM 512GB SSD"
+              value={form.description}
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            />
+          </div>
+
           <div className="form-grid-2">
             <div className="form-group">
               <label>Serial Number / Software Key *</label>
-              <input className="form-control" required value={form.serial_number} onChange={(e) => setForm((f) => ({ ...f, serial_number: e.target.value }))} />
+              <input
+                className="form-control"
+                required
+                value={form.serial_number}
+                onChange={(e) => setForm((f) => ({ ...f, serial_number: e.target.value }))}
+              />
             </div>
             <div className="form-group">
-              <label>Assigned Date</label>
-              <input type="date" className="form-control" value={form.assigned_date} onChange={(e) => setForm((f) => ({ ...f, assigned_date: e.target.value }))} />
+              <label>Assigned Date (Auto)</label>
+              <input
+                type="date"
+                className="form-control"
+                required
+                readOnly
+                value={form.assigned_date}
+              />
             </div>
           </div>
+
           <div className="form-group">
-            <label>Note</label>
-            <textarea className="form-control" value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
+            <label>Remarks / Note</label>
+            <textarea
+              className="form-control"
+              rows={2}
+              value={form.note}
+              onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+            />
           </div>
         </form>
       </Modal>

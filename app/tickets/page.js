@@ -9,16 +9,16 @@ import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHel
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { ticketsApi, departmentsApi } from '../../services/api';
+import { ticketsApi, departmentsApi, usersApi, uploadsApi, aiApi } from '../../services/api';
 
 const PAGE_SIZE = 10;
 const CATEGORIES = [
-  'Microsoft 365',
-  'Network / VPN',
-  'Hardware',
-  'Software / OS',
-  'User Account',
-  'Other',
+  { value: 'Microsoft 365', label: 'Microsoft 365 / Outlook / Teams' },
+  { value: 'Network / VPN', label: 'Network / Fortinet VPN / Wi-Fi' },
+  { value: 'Hardware', label: 'Hardware / PC / Monitor / Peripheral' },
+  { value: 'Software / OS', label: 'Software / Windows / macOS Issue' },
+  { value: 'User Account', label: 'Access / Credentials / Password Reset' },
+  { value: 'Other', label: 'Other (Specify Below)' },
 ];
 const DEFAULT_DEPTS = [
   'Executive Board',
@@ -65,6 +65,10 @@ const emptyForm = {
   other_category: '',
   subject: '',
   description: '',
+  attachment_url: null,
+  behalf_name: '',
+  requester_name: '',
+  requester_email: '',
 };
 
 export default function TicketsPage() {
@@ -92,6 +96,9 @@ function TicketsPageInner() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [directory, setDirectory] = useState([]);
+  const [attachFile, setAttachFile] = useState(null);
+  const [aiBusy, setAiBusy] = useState('');
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState(null);
@@ -119,15 +126,100 @@ function TicketsPageInner() {
       const list = (res.data || []).map((d) => d.name || d).filter(Boolean);
       if (list.length) setDepartments(list);
     }).catch(() => {});
+    usersApi.directory().then((res) => {
+      setDirectory((res.data || []).filter((u) => (u.status || 'Active') === 'Active'));
+    }).catch(() => {});
   }, [hasPermission, load]);
+
+  function openCreateForm() {
+    setForm({
+      ...emptyForm,
+      department: user?.department || '',
+      requester_name: user?.name || '',
+      requester_email: user?.email || '',
+    });
+    setAttachFile(null);
+    setCreateOpen(true);
+  }
 
   useEffect(() => {
     if (searchParams.get('create') === '1' && hasPermission('tickets')) {
-      setForm({ ...emptyForm, department: user?.department || '' });
-      setCreateOpen(true);
+      openCreateForm();
       router.replace('/tickets');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, hasPermission, user, router]);
+
+  function applyBehalf(nameVal) {
+    const found = directory.find((u) => (u.name || '').toLowerCase() === nameVal.trim().toLowerCase());
+    if (found) {
+      setForm((f) => ({
+        ...f,
+        behalf_name: nameVal,
+        requester_name: found.name,
+        requester_email: found.email,
+        department: found.department || f.department,
+      }));
+    } else {
+      setForm((f) => ({
+        ...f,
+        behalf_name: nameVal,
+        requester_name: user?.name || '',
+        requester_email: user?.email || '',
+      }));
+    }
+  }
+
+  async function improveField(field, type) {
+    const draft = (form[field] || '').trim();
+    if (!draft) {
+      showToast('Draft needed', 'Please write a draft first.', 'warning');
+      return;
+    }
+    setAiBusy(field);
+    try {
+      const res = await aiApi.improve(draft, type);
+      setForm((f) => ({ ...f, [field]: res.data?.text || draft }));
+      showToast('Improved', res.message || 'Text improved.', 'success');
+    } catch (err) {
+      showToast('Error', err.message || 'AI improve failed', 'error');
+    } finally {
+      setAiBusy('');
+    }
+  }
+
+  async function submitCreate(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      let attachment_url = null;
+      if (attachFile) {
+        const up = await uploadsApi.upload(attachFile);
+        attachment_url = up.data?.url || null;
+      }
+      await ticketsApi.create({
+        department: form.department,
+        priority: form.priority,
+        category: form.category,
+        other_category: form.category === 'Other' ? form.other_category : null,
+        subject: form.subject,
+        description: form.description,
+        requester_name: form.requester_name || user?.name,
+        requester_email: form.requester_email || user?.email,
+        attachment_url,
+        on_behalf: Boolean(form.behalf_name?.trim()),
+      });
+      showToast('Ticket Created', 'Support ticket submitted successfully.', 'success');
+      setCreateOpen(false);
+      setForm(emptyForm);
+      setAttachFile(null);
+      await load();
+    } catch (err) {
+      showToast('Error', err.message || 'Could not create ticket', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -154,27 +246,6 @@ function TicketsPageInner() {
     const overdue = filtered.filter((t) => slaInfo(t).text === 'Overdue').length;
     return { total, progress, resolved, overdue };
   }, [filtered]);
-
-  async function submitCreate(e) {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await ticketsApi.create({
-        ...form,
-        other_category: form.category === 'Other' ? form.other_category : null,
-        requester_name: user?.name,
-        requester_email: user?.email,
-      });
-      showToast('Ticket Created', 'Support ticket submitted successfully.', 'success');
-      setCreateOpen(false);
-      setForm(emptyForm);
-      await load();
-    } catch (err) {
-      showToast('Error', err.message || 'Could not create ticket', 'error');
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function openDetail(id) {
     try {
@@ -264,10 +335,7 @@ function TicketsPageInner() {
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => {
-            setForm({ ...emptyForm, department: user?.department || '' });
-            setCreateOpen(true);
-          }}
+          onClick={openCreateForm}
         >
           <i className="fa-solid fa-plus" /><span>Create New Ticket</span>
         </button>
@@ -399,14 +467,43 @@ function TicketsPageInner() {
         )}
       >
         <form id="newTicketForm" onSubmit={submitCreate} autoComplete="off">
+          {isAdmin ? (
+            <div
+              className="form-group"
+              style={{
+                background: 'rgba(37,99,235,0.06)',
+                border: '1px solid rgba(37,99,235,0.2)',
+                padding: 12,
+                borderRadius: 8,
+                marginBottom: 16,
+              }}
+            >
+              <label style={{ color: 'var(--primary)', fontWeight: 700, marginBottom: 6 }}>
+                <i className="fa-solid fa-user-gear" /> Raise Ticket on Behalf of Employee (IT Support Override)
+              </label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Search and select employee name (leave blank if for yourself)..."
+                list="behalfEmployeeList"
+                value={form.behalf_name}
+                onChange={(e) => applyBehalf(e.target.value)}
+              />
+              <datalist id="behalfEmployeeList">
+                {directory.map((u) => (
+                  <option key={u.id || u.email} value={u.name}>{u.email}</option>
+                ))}
+              </datalist>
+            </div>
+          ) : null}
           <div className="form-grid-2">
             <div className="form-group">
               <label>Requester Name</label>
-              <input className="form-control" value={user?.name || ''} readOnly />
+              <input className="form-control" value={form.requester_name || user?.name || ''} readOnly />
             </div>
             <div className="form-group">
               <label>Requester Email</label>
-              <input className="form-control" value={user?.email || ''} readOnly />
+              <input className="form-control" value={form.requester_email || user?.email || ''} readOnly />
             </div>
           </div>
           <div className="form-grid-2">
@@ -456,7 +553,7 @@ function TicketsPageInner() {
               onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
             >
               <option value="">Select Category</option>
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </div>
           {form.category === 'Other' ? (
@@ -465,13 +562,25 @@ function TicketsPageInner() {
               <input
                 className="form-control"
                 required
+                placeholder="Describe category..."
                 value={form.other_category}
                 onChange={(e) => setForm((f) => ({ ...f, other_category: e.target.value }))}
               />
             </div>
           ) : null}
           <div className="form-group">
-            <label>Subject / Short Summary *</label>
+            <div className="label-with-ai">
+              <label>Subject / Short Summary *</label>
+              <button
+                type="button"
+                className="btn-ai"
+                disabled={Boolean(aiBusy)}
+                onClick={() => improveField('subject', 'subject')}
+              >
+                <i className={`fa-solid ${aiBusy === 'subject' ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'}`} />
+                <span>{aiBusy === 'subject' ? 'Improving...' : 'Improve with AI'}</span>
+              </button>
+            </div>
             <input
               className="form-control"
               required
@@ -481,13 +590,33 @@ function TicketsPageInner() {
             />
           </div>
           <div className="form-group">
-            <label>Detailed Description *</label>
+            <div className="label-with-ai">
+              <label>Detailed Description *</label>
+              <button
+                type="button"
+                className="btn-ai"
+                disabled={Boolean(aiBusy)}
+                onClick={() => improveField('description', 'description')}
+              >
+                <i className={`fa-solid ${aiBusy === 'description' ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles'}`} />
+                <span>{aiBusy === 'description' ? 'Improving...' : 'Improve with AI'}</span>
+              </button>
+            </div>
             <textarea
               className="form-control"
               required
               value={form.description}
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
               placeholder="Describe issue..."
+            />
+          </div>
+          <div className="form-group">
+            <label>Attachment (Optional)</label>
+            <input
+              type="file"
+              className="form-control file-input"
+              accept="image/*,.pdf,.doc,.docx,.txt"
+              onChange={(e) => setAttachFile(e.target.files?.[0] || null)}
             />
           </div>
         </form>
@@ -602,7 +731,7 @@ function TicketsPageInner() {
                   value={editForm.category || ''}
                   onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))}
                 >
-                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </select>
               </div>
             </div>
@@ -624,6 +753,27 @@ function TicketsPageInner() {
                 onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
               />
             </div>
+            {detail.attachment_url ? (
+              <div className="form-group">
+                <label>Attachment</label>
+                <div className="attachment-display-card">
+                  <i className="fa-solid fa-paperclip" style={{ color: 'var(--primary)' }} />
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={async () => {
+                      try {
+                        await uploadsApi.open(detail.attachment_url);
+                      } catch (err) {
+                        showToast('Error', err.message || 'Could not open file', 'error');
+                      }
+                    }}
+                  >
+                    View File
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <div className="ticket-thread-section">
               <h4 className="thread-heading"><i className="fa-solid fa-comments" /> Discussion Thread</h4>
