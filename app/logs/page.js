@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
-import { EmptyState } from '../../components/uiHelpers';
+import { EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -31,6 +31,21 @@ export default function LogsPage() {
     if (!hasPermission('logs')) return;
     load();
   }, [hasPermission, load]);
+
+  const exportPack = useMemo(() => ({
+    headers: ['Time', 'Action', 'Target', 'Details', 'User Name', 'User Email', 'User Role'],
+    rows: logs.map((log) => [
+      log.created_at || log.createdAt
+        ? new Date(log.created_at || log.createdAt).toLocaleString()
+        : '',
+      log.action || '',
+      log.target_id || log.targetId || '',
+      log.details || '',
+      log.user_name || log.userName || '',
+      log.user_email || log.userEmail || '',
+      log.user_role || log.userRole || '',
+    ]),
+  }), [logs]);
 
   async function clearLogs() {
     if (!window.confirm('Clear your audit logs? This cannot be undone.')) return;
@@ -63,9 +78,17 @@ export default function LogsPage() {
               Track actions, holds, SLA changes, auto-assignments, and approvals.
             </p>
           </div>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={clearLogs}>
-            <i className="fa-solid fa-trash-can" /><span>Clear Logs</span>
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <TableExportButtons
+              filename="activity-logs"
+              title="System Activity & Audit Trail"
+              headers={exportPack.headers}
+              rows={exportPack.rows}
+            />
+            <button type="button" className="btn btn-secondary btn-sm" onClick={clearLogs}>
+              <i className="fa-solid fa-trash-can" /><span>Clear Logs</span>
+            </button>
+          </div>
         </div>
         <div className="logs-timeline">
           {loading ? (

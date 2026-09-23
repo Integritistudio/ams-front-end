@@ -80,6 +80,7 @@ export const usersApi = {
   },
   directory: () => api('/api/users/directory'),
   approvers: () => api('/api/users/approvers'),
+  executives: () => api('/api/users/executives'),
   get: (id) => api(`/api/users/${id}`),
   create: (body) => api('/api/users', { method: 'POST', body }),
   update: (id, body) => api(`/api/users/${id}`, { method: 'PUT', body }),

@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -49,6 +49,8 @@ function RequisitionsPageInner() {
     Boolean(role?.is_approver) ||
     Boolean(role?.is_executive);
   const isItOverride = canViewAll('requisitions') || Boolean(role?.is_it_admin);
+  const isApproverCreator = Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
+  const signerLabel = isApproverCreator ? 'Executive' : 'Approver';
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -155,11 +157,12 @@ function RequisitionsPageInner() {
     });
     setCreateOpen(true);
     try {
-      const [apprRes, dirRes] = await Promise.all([
-        usersApi.approvers(),
+      const signerReq = isApproverCreator ? usersApi.executives() : usersApi.approvers();
+      const [signerRes, dirRes] = await Promise.all([
+        signerReq,
         isItOverride ? usersApi.directory().catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
       ]);
-      const list = apprRes.data || [];
+      const list = signerRes.data || [];
       setApprovers(list);
       setDirectory((dirRes.data || []).filter((u) => (u.status || 'Active') === 'Active'));
       if (list.length === 1) {
@@ -173,7 +176,14 @@ function RequisitionsPageInner() {
       }
     } catch (err) {
       setApprovers([]);
-      showToast('Error', err.message || 'Could not load approver. Assign Approver role to one user in Role Management.', 'error');
+      showToast(
+        'Error',
+        err.message ||
+          (isApproverCreator
+            ? 'Could not load executives. Assign Executive role in Role Management.'
+            : 'Could not load approver. Assign Approver role to one user in Role Management.'),
+        'error'
+      );
     }
   }
   const filtered = useMemo(() => {
@@ -203,6 +213,21 @@ function RequisitionsPageInner() {
   }, [rows, search, statusFilter, mineOnly, user?.email]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const exportPack = useMemo(() => ({
+    headers: ['Request ID', 'Requester', 'Department', 'Type', 'Item', 'Urgency', 'Approver', 'Status', 'Project'],
+    rows: filtered.map((r) => [
+      pid(r),
+      r.requester_name || r.requesterName || '',
+      r.department || '',
+      r.type || '',
+      r.item || '',
+      r.urgency || '',
+      r.approver_name || r.approverName || '',
+      r.status || '',
+      r.project || '',
+    ]),
+  }), [filtered]);
 
   const kpis = useMemo(() => {
     const total = filtered.length;
@@ -370,6 +395,12 @@ function RequisitionsPageInner() {
               <option value="On Hold">On Hold</option>
             </select>
           </div>
+          <TableExportButtons
+            filename="asset-requests"
+            title="Asset Requests"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 
@@ -477,7 +508,7 @@ function RequisitionsPageInner() {
 
           <div className="form-grid-2">
             <div className="form-group">
-              <label>Designated Approver *</label>
+              <label>Designated {signerLabel} *</label>
               <select
                 className="form-control form-control-select"
                 required
@@ -485,10 +516,14 @@ function RequisitionsPageInner() {
                 onChange={(e) => setForm((f) => ({ ...f, approver_id: e.target.value }))}
               >
                 {approvers.length === 0 ? (
-                  <option value="">No Approver configured — set Approver role in Role Management</option>
+                  <option value="">
+                    {isApproverCreator
+                      ? 'No Executive configured — set Executive role in Role Management'
+                      : 'No Approver configured — set Approver role in Role Management'}
+                  </option>
                 ) : (
                   <>
-                    {approvers.length > 1 ? <option value="">Select Approver</option> : null}
+                    {approvers.length > 1 ? <option value="">Select {signerLabel}</option> : null}
                     {approvers.map((u) => (
                       <option key={u.id} value={u.id}>
                         {u.name} ({u.email})

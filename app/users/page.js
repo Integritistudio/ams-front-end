@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -21,6 +21,34 @@ const emptyForm = {
   phone: '',
   status: 'Active',
   role_id: '',
+  password: '',
+};
+
+function generatePassword(length = 10) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$!';
+  let pass = '';
+  for (let i = 0; i < length; i += 1) {
+    pass += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return pass;
+}
+
+const QUICK_ADD_META = {
+  department: {
+    title: 'Add New Department',
+    icon: 'fa-building',
+    label: 'Department Name *',
+  },
+  designation: {
+    title: 'Add New Designation',
+    icon: 'fa-briefcase',
+    label: 'Designation Title *',
+  },
+  manager: {
+    title: 'Add New Line Manager',
+    icon: 'fa-user-tie',
+    label: 'Manager Name *',
+  },
 };
 
 export default function UsersPage() {
@@ -29,6 +57,7 @@ export default function UsersPage() {
   const [rows, setRows] = useState([]);
   const [roles, setRoles] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [designations, setDesignations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('All');
@@ -40,11 +69,19 @@ export default function UsersPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [quickType, setQuickType] = useState(null);
+  const [quickValue, setQuickValue] = useState('');
+  const [quickSaving, setQuickSaving] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await usersApi.list();
-      setRows(res.data || []);
+      const list = res.data || [];
+      setRows(list);
+      const fromUsers = [...new Set(list.map((u) => u.designation).filter(Boolean))].sort();
+      setDesignations((prev) => [...new Set([...prev, ...fromUsers])].sort());
     } catch (err) {
       showToast('Error', err.message || 'Failed to load users', 'error');
     } finally {
@@ -52,22 +89,29 @@ export default function UsersPage() {
     }
   }, [showToast]);
 
+  const loadDepartments = useCallback(async () => {
+    try {
+      const res = await departmentsApi.list();
+      const list = (res.data || []).map((d) => d.name || d).filter(Boolean);
+      setDepartments(list);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     if (!hasPermission('users')) return;
     load();
     rolesApi.list().then((res) => setRoles(res.data || [])).catch(() => {});
-    departmentsApi.list().then((res) => {
-      const list = (res.data || []).map((d) => d.name || d).filter(Boolean);
-      setDepartments(list);
-    }).catch(() => {});
-  }, [hasPermission, load]);
+    loadDepartments();
+  }, [hasPermission, load, loadDepartments]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((u) => {
       if (roleFilter !== 'All') {
-        const roleName = u.role_name || u.roleName || roles.find((r) => Number(r.id) === Number(u.role_id))?.name;
-        if (roleName !== roleFilter && String(u.role_id) !== String(roleFilter)) return false;
+        const roleNameVal = u.role_name || u.roleName || roles.find((r) => Number(r.id) === Number(u.role_id))?.name;
+        if (roleNameVal !== roleFilter && String(u.role_id) !== String(roleFilter)) return false;
       }
       if (deptFilter !== 'All' && (u.department || '') !== deptFilter) return false;
       if (statusFilter !== 'All' && (u.status || '') !== statusFilter) return false;
@@ -78,9 +122,39 @@ export default function UsersPage() {
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const exportPack = useMemo(() => ({
+    headers: ['User ID', 'Name', 'Email', 'Role', 'Department', 'Designation', 'Manager', 'Phone', 'Status'],
+    rows: filtered.map((u) => [
+      u.id,
+      u.name || '',
+      u.email || '',
+      u.role_name || u.roleName || roles.find((r) => Number(r.id) === Number(u.role_id))?.name || '',
+      u.department || '',
+      u.designation || '',
+      u.manager || '',
+      u.phone || '',
+      u.status || '',
+    ]),
+  }), [filtered, roles]);
+
+  const deptOptions = useMemo(() => {
+    const fallback = [
+      'IT & Software Engineering',
+      'Human Resources',
+      'Finance',
+      'Sales',
+      'Executive Board',
+    ];
+    return [...new Set([...(departments.length ? departments : fallback), form.department].filter(Boolean))].sort();
+  }, [departments, form.department]);
+
   function openCreate() {
     setEditingId(null);
-    setForm({ ...emptyForm, role_id: roles[0]?.id ? String(roles[0].id) : '' });
+    setForm({
+      ...emptyForm,
+      role_id: roles[0]?.id ? String(roles[0].id) : '',
+      manager: '',
+    });
     setOpen(true);
   }
 
@@ -95,19 +169,64 @@ export default function UsersPage() {
       phone: u.phone || '',
       status: u.status || 'Active',
       role_id: String(u.role_id || u.roleId || ''),
+      password: '',
     });
     setOpen(true);
   }
 
-  const managerOptions = useMemo(() => {
-    return rows
-      .filter((u) => (u.status || '') === 'Active' && Number(u.id) !== Number(editingId))
-      .slice()
-      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-  }, [rows, editingId]);
+  function openQuickAdd(type) {
+    setQuickType(type);
+    setQuickValue('');
+    setQuickOpen(true);
+  }
+
+  async function saveQuickAdd() {
+    const val = quickValue.trim();
+    if (!val || !quickType) {
+      showToast('Required', 'Please enter a value.', 'warning');
+      return;
+    }
+    setQuickSaving(true);
+    try {
+      if (quickType === 'department') {
+        try {
+          await departmentsApi.create(val);
+        } catch (err) {
+          if (!(err.message || '').toLowerCase().includes('already')) throw err;
+        }
+        await loadDepartments();
+        setForm((f) => ({ ...f, department: val }));
+        showToast('Department Added', `New department "${val}" added and selected.`, 'success');
+      } else if (quickType === 'designation') {
+        setDesignations((prev) => [...new Set([...prev, val])].sort());
+        setForm((f) => ({ ...f, designation: val }));
+        showToast('Designation Added', `Designation set to "${val}".`, 'success');
+      } else if (quickType === 'manager') {
+        setForm((f) => ({ ...f, manager: val }));
+        showToast('Line Manager Added', `Line Manager set to "${val}".`, 'success');
+      }
+      setQuickOpen(false);
+      setQuickType(null);
+      setQuickValue('');
+    } catch (err) {
+      showToast('Error', err.message || 'Could not add entry', 'error');
+    } finally {
+      setQuickSaving(false);
+    }
+  }
+
+  function autoGeneratePassword() {
+    const pass = generatePassword(10);
+    setForm((f) => ({ ...f, password: pass }));
+    showToast('Password Generated', `New secure password generated: ${pass}`, 'success');
+  }
 
   async function submit(e) {
     e.preventDefault();
+    if (!form.department?.trim()) {
+      showToast('Required', 'Department is required.', 'warning');
+      return;
+    }
     setSaving(true);
     try {
       const roleId = Number(form.role_id);
@@ -127,7 +246,17 @@ export default function UsersPage() {
           return;
         }
       }
-      const body = { ...form, role_id: roleId };
+      const body = {
+        name: form.name,
+        email: form.email,
+        department: form.department,
+        designation: form.designation,
+        manager: form.manager,
+        phone: form.phone || undefined,
+        status: form.status,
+        role_id: roleId,
+      };
+      if (form.password?.trim()) body.password = form.password.trim();
       if (editingId) await usersApi.update(editingId, body);
       else await usersApi.create(body);
       showToast('Saved', editingId ? 'User updated.' : 'User created.', 'success');
@@ -180,6 +309,13 @@ export default function UsersPage() {
     return u.role_name || u.roleName || roles.find((r) => Number(r.id) === Number(u.role_id || u.roleId))?.name || '—';
   }
 
+  const labelRowStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  };
+
   if (!hasPermission('users')) {
     return (
       <AppShell title="User Management" subtitle="Directory and account administration.">
@@ -187,6 +323,8 @@ export default function UsersPage() {
       </AppShell>
     );
   }
+
+  const quickMeta = quickType ? QUICK_ADD_META[quickType] : null;
 
   return (
     <AppShell
@@ -231,6 +369,12 @@ export default function UsersPage() {
           <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
             <i className="fa-solid fa-filter-circle-xmark" /> Clear
           </button>
+          <TableExportButtons
+            filename="users"
+            title="User Directory"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 
@@ -284,8 +428,8 @@ export default function UsersPage() {
 
       <Modal
         open={open}
-        title={editingId ? 'Edit User' : 'Add User'}
-        icon="fa-user-plus"
+        title={editingId ? 'Edit Corporate User' : 'Add New Corporate User'}
+        icon="fa-user"
         onClose={() => setOpen(false)}
         footer={(
           <>
@@ -300,14 +444,52 @@ export default function UsersPage() {
           <div className="form-grid-2">
             <div className="form-group">
               <label>Full Name *</label>
-              <input className="form-control" required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+              <input
+                className="form-control"
+                required
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
             </div>
             <div className="form-group">
-              <label>Email *</label>
-              <input type="email" className="form-control" required disabled={Boolean(editingId)} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+              <label>Official Email *</label>
+              <input
+                type="email"
+                className="form-control"
+                placeholder="name@integriti.io"
+                required
+                disabled={Boolean(editingId)}
+                value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+              />
             </div>
           </div>
+
           <div className="form-grid-2">
+            <div className="form-group">
+              <div style={labelRowStyle}>
+                <label style={{ marginBottom: 0 }}>Department *</label>
+                <button
+                  type="button"
+                  className="btn-ai btn-sm"
+                  style={{ height: 22, fontSize: 10.5, padding: '0 6px' }}
+                  onClick={() => openQuickAdd('department')}
+                >
+                  <i className="fa-solid fa-plus" /> Add New
+                </button>
+              </div>
+              <select
+                className="form-control form-control-select"
+                required
+                value={form.department}
+                onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
+              >
+                <option value="">Select department</option>
+                {deptOptions.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
             <div className="form-group">
               <label>Role *</label>
               <select
@@ -318,7 +500,6 @@ export default function UsersPage() {
                   const roleId = e.target.value;
                   const role = roles.find((r) => String(r.id) === String(roleId));
                   if (role && (role.is_it_admin || role.is_approver)) {
-                    const kind = role.is_it_admin ? 'IT Admin' : 'Approver';
                     const occupied = rows.filter(
                       (u) =>
                         Number(u.role_id || u.roleId) === Number(roleId) &&
@@ -340,54 +521,134 @@ export default function UsersPage() {
                 {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
             </div>
+          </div>
+
+          <div className="form-grid-2">
+            <div className="form-group">
+              <div style={labelRowStyle}>
+                <label style={{ marginBottom: 0 }}>Designation *</label>
+                <button
+                  type="button"
+                  className="btn-ai btn-sm"
+                  style={{ height: 22, fontSize: 10.5, padding: '0 6px' }}
+                  onClick={() => openQuickAdd('designation')}
+                >
+                  <i className="fa-solid fa-plus" /> Add New
+                </button>
+              </div>
+              <input
+                className="form-control"
+                list="userDesignationList"
+                placeholder="e.g. Technical Support Specialist"
+                required
+                value={form.designation}
+                onChange={(e) => setForm((f) => ({ ...f, designation: e.target.value }))}
+              />
+              <datalist id="userDesignationList">
+                {designations.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+            </div>
             <div className="form-group">
               <label>Status</label>
-              <select className="form-control form-control-select" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
+              <select
+                className="form-control form-control-select"
+                value={form.status}
+                onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+              >
                 <option value="Active">Active</option>
                 <option value="Suspended">Suspended</option>
               </select>
             </div>
           </div>
+
           <div className="form-grid-2">
             <div className="form-group">
-              <label>Department</label>
-              <select className="form-control form-control-select" value={form.department} onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}>
-                <option value="">Select department</option>
-                {(departments.length ? departments : [
-                  'IT & Software Engineering', 'Human Resources', 'Finance', 'Sales', 'Executive Board',
-                ]).map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Designation</label>
-              <input className="form-control" value={form.designation} onChange={(e) => setForm((f) => ({ ...f, designation: e.target.value }))} />
-            </div>
-          </div>
-          <div className="form-grid-2">
-            <div className="form-group">
-              <label>Manager</label>
-              <select
-                className="form-control form-control-select"
+              <div style={labelRowStyle}>
+                <label style={{ marginBottom: 0 }}>Line Manager</label>
+                <button
+                  type="button"
+                  className="btn-ai btn-sm"
+                  style={{ height: 22, fontSize: 10.5, padding: '0 6px' }}
+                  onClick={() => openQuickAdd('manager')}
+                >
+                  <i className="fa-solid fa-plus" /> Add New
+                </button>
+              </div>
+              <input
+                className="form-control"
+                list="userManagerList"
+                placeholder="e.g. Ahmer Arsalan"
                 value={form.manager}
                 onChange={(e) => setForm((f) => ({ ...f, manager: e.target.value }))}
-              >
-                <option value="">Select manager</option>
-                {managerOptions.map((u) => (
-                  <option key={u.id} value={u.name}>
-                    {u.name} ({u.email})
-                  </option>
-                ))}
-                {form.manager && !managerOptions.some((u) => u.name === form.manager) ? (
-                  <option value={form.manager}>{form.manager} (current)</option>
-                ) : null}
-              </select>
+              />
+              <datalist id="userManagerList">
+                {rows
+                  .filter((u) => (u.status || '') === 'Active' && Number(u.id) !== Number(editingId))
+                  .map((u) => (
+                    <option key={u.id} value={u.name}>{u.email}</option>
+                  ))}
+              </datalist>
             </div>
             <div className="form-group">
-              <label>Phone</label>
-              <input className="form-control" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+              <div style={labelRowStyle}>
+                <label style={{ marginBottom: 0 }}>Password (New / Reset)</label>
+                <button
+                  type="button"
+                  className="btn-ai btn-sm"
+                  style={{ height: 22, fontSize: 10.5, padding: '0 6px' }}
+                  onClick={autoGeneratePassword}
+                >
+                  <i className="fa-solid fa-key" /> Auto-Generate
+                </button>
+              </div>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Leave blank to email password-setup link"
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                autoComplete="new-password"
+              />
             </div>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={quickOpen}
+        title={quickMeta?.title || 'Add New Entry'}
+        icon={quickMeta?.icon || 'fa-plus'}
+        onClose={() => { setQuickOpen(false); setQuickType(null); }}
+        maxWidth={420}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => { setQuickOpen(false); setQuickType(null); }}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-primary" disabled={quickSaving} onClick={saveQuickAdd}>
+              <i className="fa-solid fa-check" /><span>{quickSaving ? 'Saving...' : 'Save'}</span>
+            </button>
+          </>
+        )}
+      >
+        <div className="form-group">
+          <label>{quickMeta?.label || 'Name / Title *'}</label>
+          <input
+            className="form-control"
+            placeholder="Type here..."
+            value={quickValue}
+            autoFocus
+            onChange={(e) => setQuickValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                saveQuickAdd();
+              }
+            }}
+          />
+        </div>
       </Modal>
     </AppShell>
   );

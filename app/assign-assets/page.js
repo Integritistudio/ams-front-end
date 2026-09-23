@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { Pagination, EmptyState } from '../../components/uiHelpers';
+import { Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -81,6 +81,30 @@ export default function AssignAssetsPage() {
   }, [rows, search, category]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const exportPack = useMemo(() => ({
+    headers: ['Record ID', 'Employee Name', 'Department', 'Employee Email', 'Asset Code', 'Category', 'Item Name', 'Brand', 'Serial', 'Assigned Date', 'Description', 'Note'],
+    rows: filtered.map((a) => {
+      const email = a.user_email || a.userEmail || '';
+      const emp = users.find((u) => u.email?.toLowerCase() === email?.toLowerCase());
+      return [
+        pid(a),
+        emp?.name || a.user_name || '',
+        emp?.department || a.department || '',
+        email,
+        a.asset_code || a.assetCode || '',
+        a.category || '',
+        a.name || '',
+        a.brand || '',
+        a.serial_number || a.serialNumber || '',
+        a.assigned_date || a.assignedDate
+          ? new Date(a.assigned_date || a.assignedDate).toLocaleDateString()
+          : '',
+        a.description || '',
+        a.note || '',
+      ];
+    }),
+  }), [filtered, users]);
 
   function applyEmployeeByName(nameVal) {
     const name = String(nameVal || '').trim().toLowerCase();
@@ -230,6 +254,12 @@ export default function AssignAssetsPage() {
               <option value="Peripheral">Peripheral / Accessory</option>
             </select>
           </div>
+          <TableExportButtons
+            filename="user-assets"
+            title="User Asset Assignment"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 

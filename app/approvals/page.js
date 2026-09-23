@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -30,10 +30,25 @@ export default function ApprovalsPage() {
   const [busy, setBusy] = useState(false);
 
   const isDesignatedApprover = Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
+  const isExecutiveSigner = Boolean(role?.is_executive) && !Boolean(role?.is_it_admin);
+  const canSignPending = isDesignatedApprover || isExecutiveSigner;
   const canSeeAllPending =
     Boolean(role?.is_it_admin) ||
     Boolean(role?.is_approver) ||
     Boolean(role?.is_executive);
+
+  const isApproverCreatedRequest = (r) => {
+    if (!r) return false;
+    if (r.requester_is_approver === true || r.requesterIsApprover === true) return true;
+    const myEmail = (user?.email || '').toLowerCase();
+    const requesterEmail = (r.requester_email || r.requesterEmail || '').toLowerCase();
+    // Approver viewing their own pending request
+    if (isDesignatedApprover && myEmail && requesterEmail === myEmail) return true;
+    if (isDesignatedApprover && user?.id && Number(r.requester_id ?? r.requesterId) === Number(user.id)) {
+      return true;
+    }
+    return false;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,12 +87,30 @@ export default function ApprovalsPage() {
 
   const pageRows = pending.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const exportPack = useMemo(() => ({
+    headers: ['Request ID', 'Requester', 'Department', 'Type', 'Item', 'Urgency', 'Project', 'Status', 'Approver'],
+    rows: pending.map((r) => [
+      pid(r),
+      r.requester_name || r.requesterName || '',
+      r.department || '',
+      r.type || '',
+      r.item || '',
+      r.urgency || '',
+      r.project || '',
+      r.status || '',
+      r.approver_name || r.approverName || '',
+    ]),
+  }), [pending]);
+
+  const needsExecutiveSign = isApproverCreatedRequest(detail);
   const canActOnDetail = Boolean(
     detail &&
-    isDesignatedApprover &&
+    canSignPending &&
     (detail.status || '').toLowerCase().includes('pending') &&
     user?.id &&
-    Number(detail.approver_id ?? detail.approverId) === Number(user.id)
+    Number(detail.approver_id ?? detail.approverId) === Number(user.id) &&
+    // Approver-created → Executive only (Approver cannot self-approve)
+    (!needsExecutiveSign || isExecutiveSigner)
   );
 
   async function openDetail(id) {
@@ -93,17 +126,25 @@ export default function ApprovalsPage() {
 
   async function act(action) {
     if (!detail) return;
-    if (!isDesignatedApprover) {
+    if (!canSignPending) {
       showToast(
         'Not allowed',
-        'Only the designated Approver can approve or reject. IT Admin is view-only here.',
+        'Only the assigned Approver or Executive can approve or reject. IT Admin is view-only here.',
+        'warning'
+      );
+      return;
+    }
+    if (isApproverCreatedRequest(detail) && !isExecutiveSigner) {
+      showToast(
+        'Not allowed',
+        'Approver-created requests must be approved by an Executive. You cannot approve your own request.',
         'warning'
       );
       return;
     }
     const approverId = detail.approver_id ?? detail.approverId;
     if (!user?.id || Number(approverId) !== Number(user.id)) {
-      showToast('Not allowed', 'Only the assigned Approver can approve or reject this request.', 'warning');
+      showToast('Not allowed', 'Only the assigned signer can approve or reject this request.', 'warning');
       return;
     }
     setBusy(true);
@@ -149,10 +190,10 @@ export default function ApprovalsPage() {
     <AppShell
       title="Pending Approvals"
       subtitle={
-        isDesignatedApprover
-          ? 'Review pending requisitions and approve or reject.'
+        canSignPending
+          ? 'Review pending requisitions and approve or reject when you are the assigned signer.'
           : canSeeAllPending
-            ? 'View all pending asset requisitions (approve/reject is Approver-only).'
+            ? 'View pending asset requisitions (approve/reject is Approver or Executive only).'
             : 'View your own pending asset requisitions.'
       }
     >
@@ -195,6 +236,12 @@ export default function ApprovalsPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
+          <TableExportButtons
+            filename="pending-approvals"
+            title="Pending Approvals"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 
@@ -264,7 +311,9 @@ export default function ApprovalsPage() {
               </>
             ) : detail && (detail.status || '').toLowerCase().includes('pending') ? (
               <span style={{ fontSize: 13, color: 'var(--text-muted)', alignSelf: 'center' }}>
-                View only — only the Approver can approve or reject
+                {isApproverCreatedRequest(detail)
+                  ? 'View only — Approver-created requests must be approved by an Executive'
+                  : 'View only — only the assigned Approver or Executive can approve or reject'}
               </span>
             ) : null}
           </>

@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -239,6 +239,21 @@ function TicketsPageInner() {
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const exportPack = useMemo(() => ({
+    headers: ['Ticket ID', 'Requester', 'Department', 'Subject', 'Category', 'Priority', 'Status', 'SLA', 'Assigned To'],
+    rows: filtered.map((t) => [
+      pid(t),
+      t.requester_name || t.requesterName || '',
+      t.department || '',
+      t.subject || '',
+      t.category || '',
+      t.priority || '',
+      t.status || '',
+      slaInfo(t).text,
+      t.assigned_to || t.assignedTo || '',
+    ]),
+  }), [filtered]);
+
   const kpis = useMemo(() => {
     const total = filtered.length;
     const progress = filtered.filter((t) => ['Assigned', 'In Progress'].includes(t.status)).length;
@@ -397,6 +412,12 @@ function TicketsPageInner() {
               <option value="Resolved">Resolved</option>
             </select>
           </div>
+          <TableExportButtons
+            filename="tickets"
+            title="Support Tickets"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -65,6 +65,22 @@ export default function RolesPage() {
   }, [rows, search]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const exportPack = useMemo(() => ({
+    headers: ['Role ID', 'Name', 'Special', 'Description', 'Users', 'Status'],
+    rows: filtered.map((r) => [
+      r.id,
+      r.name || '',
+      [
+        r.is_it_admin ? 'IT Admin' : null,
+        r.is_approver ? 'Approver' : null,
+        r.is_executive ? 'Executive' : null,
+      ].filter(Boolean).join(', ') || '—',
+      r.description || '',
+      r.user_count ?? r.userCount ?? 0,
+      r.is_active === false || r.isActive === false ? 'Inactive' : 'Active',
+    ]),
+  }), [filtered]);
 
   async function openCreate() {
     setEditingId(null);
@@ -208,6 +224,12 @@ export default function RolesPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
+          <TableExportButtons
+            filename="roles"
+            title="Roles & Permissions"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 

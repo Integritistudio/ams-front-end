@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -93,6 +93,26 @@ export default function ProcurementPage() {
   }, [rows, search]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const exportPack = useMemo(() => ({
+    headers: ['Log ID', 'Item', 'Vendor', 'Cost', 'Brand', 'Serial', 'Assigned User', 'Department', 'Delivery Date', 'Approver', 'Status', 'Description'],
+    rows: filtered.map((r) => [
+      pid(r),
+      r.item_name || r.itemName || '',
+      r.vendor || '',
+      r.cost ?? '',
+      r.brand || '',
+      r.serial_number || r.serialNumber || '',
+      r.assigned_user_email || r.assignedUserEmail || '',
+      r.department || '',
+      r.delivery_date || r.deliveryDate
+        ? new Date(r.delivery_date || r.deliveryDate).toLocaleDateString()
+        : '',
+      r.approver || '',
+      r.status || '',
+      r.description || '',
+    ]),
+  }), [filtered]);
 
   function applyEmployeeByName(nameVal) {
     const name = String(nameVal || '').trim().toLowerCase();
@@ -232,6 +252,12 @@ export default function ProcurementPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
+          <TableExportButtons
+            filename="procurement-log"
+            title="Procurement & Delivery Log"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 

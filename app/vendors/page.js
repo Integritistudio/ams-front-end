@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -62,6 +62,18 @@ export default function VendorsPage() {
   }, [rows, search]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const exportPack = useMemo(() => ({
+    headers: ['Vendor ID', 'Name', 'Category', 'Contact', 'Status', 'Notes'],
+    rows: filtered.map((v) => [
+      pid(v),
+      v.name || '',
+      v.category || '',
+      v.contact || '',
+      v.status || '',
+      v.notes || '',
+    ]),
+  }), [filtered]);
 
   function openCreate() {
     setEditingId(null);
@@ -138,6 +150,12 @@ export default function VendorsPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
+          <TableExportButtons
+            filename="approved-vendors"
+            title="Approved Vendors"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 

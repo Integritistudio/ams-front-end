@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -55,6 +55,22 @@ export default function MyAssetsPage() {
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const exportPack = useMemo(() => ({
+    headers: ['Asset ID', 'Asset Code', 'Category', 'Item Name', 'Brand', 'Serial', 'Assigned Date', 'Note'],
+    rows: filtered.map((a) => [
+      pid(a),
+      a.asset_code || a.assetCode || '',
+      a.category || '',
+      a.name || '',
+      a.brand || '',
+      a.serial_number || a.serialNumber || '',
+      a.assigned_date || a.assignedDate
+        ? new Date(a.assigned_date || a.assignedDate).toLocaleDateString()
+        : '',
+      a.note || a.description || '',
+    ]),
+  }), [filtered]);
+
   if (!hasPermission('my_assets')) {
     return (
       <AppShell title="Assigned Assets" subtitle="Assets assigned to your account.">
@@ -88,6 +104,12 @@ export default function MyAssetsPage() {
               <option value="Software License">Software License</option>
             </select>
           </div>
+          <TableExportButtons
+            filename="assigned-assets"
+            title="Assigned Assets"
+            headers={exportPack.headers}
+            rows={exportPack.rows}
+          />
         </div>
       </div>
 

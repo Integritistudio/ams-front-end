@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -115,6 +115,19 @@ export default function EmailSettingsPage() {
   }, [rows, search]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const exportPack = useMemo(() => ({
+    headers: ['Template ID', 'Template Name', 'Subject', 'Status', 'Last Updated'],
+    rows: filtered.map((t) => [
+      pid(t),
+      t.name || '',
+      t.subject || '',
+      t.status || '',
+      t.updated_at || t.updatedAt
+        ? new Date(t.updated_at || t.updatedAt).toLocaleString()
+        : '',
+    ]),
+  }), [filtered]);
 
   function openCreate() {
     setEditingId(null);
@@ -402,6 +415,12 @@ export default function EmailSettingsPage() {
               <button type="button" className="btn btn-primary btn-sm" onClick={openCreate}>
                 <i className="fa-solid fa-plus" /><span>+ Add Template</span>
               </button>
+              <TableExportButtons
+                filename="email-templates"
+                title="Email Notification Templates"
+                headers={exportPack.headers}
+                rows={exportPack.rows}
+              />
             </div>
           </div>
 
