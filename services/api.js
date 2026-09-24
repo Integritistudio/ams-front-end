@@ -86,8 +86,14 @@ export const usersApi = {
   update: (id, body) => api(`/api/users/${id}`, { method: 'PUT', body }),
   updateStatus: (id, status) => api(`/api/users/${id}/status`, { method: 'PATCH', body: { status } }),
   updateRole: (id, role_id) => api(`/api/users/${id}/role`, { method: 'PATCH', body: { role_id } }),
+  specialRoleTransferPreview: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return api(`/api/users/special-role-transfer-preview${q ? `?${q}` : ''}`);
+  },
   sendPasswordSetup: (id) => api(`/api/users/${id}/send-password-setup`, { method: 'POST' }),
-  remove: (id) => api(`/api/users/${id}`, { method: 'DELETE' }),
+  relatedSummary: (id) => api(`/api/users/${id}/related-summary`),
+  remove: (id) => api(`/api/users/${id}?confirm=1`, { method: 'DELETE' }),
+  restore: (id) => api(`/api/users/${id}/restore`, { method: 'POST' }),
 };
 
 export const rolesApi = {
@@ -124,6 +130,9 @@ export const requisitionsApi = {
   approve: (id) => api(`/api/requisitions/${id}/approve`, { method: 'PATCH' }),
   reject: (id) => api(`/api/requisitions/${id}/reject`, { method: 'PATCH' }),
   hold: (id, holdReason) => api(`/api/requisitions/${id}/hold`, { method: 'PATCH', body: { reason: holdReason, hold_reason: holdReason } }),
+  inProgress: (id) => api(`/api/requisitions/${id}/in-progress`, { method: 'PATCH' }),
+  resume: (id) => api(`/api/requisitions/${id}/resume`, { method: 'PATCH' }),
+  complete: (id, note) => api(`/api/requisitions/${id}/complete`, { method: 'PATCH', body: { note: note || 'Asset request marked completed' } }),
   reply: (id, text) => api(`/api/requisitions/${id}/reply`, { method: 'POST', body: { text } }),
 };
 export const vendorsApi = {
@@ -162,7 +171,7 @@ export const logsApi = {
   clear: () => api('/api/logs', { method: 'DELETE' }),
 };
 export const settingsApi = {
-  get: () => api('/api/settings'),
+  get: () => api('/api/settings', { silent: true }),
   update: (body) => api('/api/settings', { method: 'PUT', body }),
   getSmtp: () => api('/api/settings/smtp'),
   updateSmtp: (body) => api('/api/settings/smtp', { method: 'PUT', body }),

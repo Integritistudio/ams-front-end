@@ -51,7 +51,7 @@ function PasswordForm({ mode }) {
         <div className="brand-header">
           <img src="/integriti-logo.png" alt="Integriti Logo" className="brand-logo-img" />
           <h2>{mode === 'setup' ? 'Set Up Password' : 'Reset Password'}</h2>
-          <p>Choose a secure password for your Integriti account</p>
+          <p>Choose a secure password for your IT Service Desk account</p>
         </div>
         {error ? <div className="alert-box alert-error" style={{ display: 'block' }}>{error}</div> : null}
         <form onSubmit={handleSubmit}>

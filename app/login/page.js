@@ -78,7 +78,7 @@ export default function LoginPage() {
       <div className="login-container">
         <div className="brand-header">
           <img src="/integriti-logo.png" alt="Integriti Logo" className="brand-logo-img" />
-          <h2>Integriti IT Helpdesk</h2>
+          <h2>IT Service Desk</h2>
           <p>Log in with your corporate credentials</p>
         </div>
 

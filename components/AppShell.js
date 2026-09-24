@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext';
 import { notificationsApi } from '../services/api';
 import DataLoader from './DataLoader';
 import LoginNoticeModal from './LoginNoticeModal';
+import UserAvatar from './UserAvatar';
 import { startShift, pauseShift, getShiftElapsedMs, formatShiftHours } from '../lib/shiftHours';
 const NAV_ITEMS = [
   { href: '/dashboard', slug: 'dashboard', label: 'Home Dashboard', icon: 'fa-house' },
@@ -111,7 +112,13 @@ export default function AppShell({ children, title, subtitle, actions }) {
     return <DataLoader variant="page" label="Loading portal…" />;
   }
 
-  const ticketsLabel = canViewAll('tickets') ? 'All Tickets' : 'My Tickets';
+  const ticketsLabel =
+    canViewAll('tickets') ||
+    Boolean(role?.is_it_admin) ||
+    Boolean(role?.is_approver) ||
+    Boolean(role?.is_executive)
+      ? 'All Tickets'
+      : 'My Tickets';
 
   return (
     <section id="section-dashboard" style={{ display: 'flex' }}>
@@ -129,7 +136,7 @@ export default function AppShell({ children, title, subtitle, actions }) {
           </button>
           <div className="nav-brand" style={{ cursor: 'pointer' }} onClick={() => router.push('/dashboard')} title="Go to Dashboard">
             <img src="/integriti-logo.png" alt="Integriti" className="nav-logo" />
-            <div className="nav-title">Integriti IT Helpdesk</div>
+            <div className="nav-title">IT Service Desk</div>
           </div>
         </div>
 
@@ -173,11 +180,7 @@ export default function AppShell({ children, title, subtitle, actions }) {
 
           <div className={`user-dropdown-container ${profileOpen ? 'open' : ''}`}>
             <div className="user-profile-widget" onClick={(e) => { e.stopPropagation(); setProfileOpen((v) => !v); setNotifOpen(false); }}>
-              <img
-                className="header-avatar"
-                alt="User"
-                src={user.avatar_url || "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2394a3b8'><path d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/></svg>"}
-              />
+              <UserAvatar name={user.name} src={user.avatar_url} size="md" showName={false} />
               <div className="user-details">
                 <div className="user-name">{user.name}</div>
                 <div className="user-dept">{user.email}</div>
@@ -186,8 +189,7 @@ export default function AppShell({ children, title, subtitle, actions }) {
             </div>
             <div className="profile-dropdown-menu">
               <div className="dropdown-header">
-                <div className="dropdown-user-title">{user.name}</div>
-                <div className="dropdown-user-sub">{user.email}</div>
+                <UserAvatar name={user.name} src={user.avatar_url} size="sm" sub={user.email} />
               </div>
               <div className="dropdown-divider" />
               <Link href="/dashboard" className="dropdown-item" onClick={() => setProfileOpen(false)}>
@@ -250,7 +252,7 @@ export default function AppShell({ children, title, subtitle, actions }) {
           <div className="greeting-banner">
             <div>
               <h1>{title || `Welcome, ${(user.name || 'User').split(' ')[0]}`}</h1>
-              <p>{subtitle || 'Centralized IT Helpdesk & Asset Procurement Portal.'}</p>
+              <p>{subtitle || 'Centralized IT Service Desk & Asset Procurement Portal.'}</p>
             </div>
             {actions ? <div className="action-button-group">{actions}</div> : null}
           </div>

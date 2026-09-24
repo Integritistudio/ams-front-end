@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
+import DashboardAnalytics from '../../components/DashboardAnalytics';
 import { useAuth } from '../../context/AuthContext';
-import { ticketsApi, requisitionsApi } from '../../services/api';
-import DataLoader from '../../components/DataLoader';
 
 const HUB_TILES = [
   {
@@ -69,53 +68,8 @@ const HUB_TILES = [
 export default function DashboardPage() {
   const { hasPermission, user } = useAuth();
   const router = useRouter();
-  const [ticketCount, setTicketCount] = useState(0);
-  const [reqCount, setReqCount] = useState(0);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [ticketDisclaimer, setTicketDisclaimer] = useState(false);
   const [reqDisclaimer, setReqDisclaimer] = useState(false);
-
-  useEffect(() => {
-    if (!hasPermission('dashboard')) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const [tRes, rRes] = await Promise.all([
-          hasPermission('tickets') ? ticketsApi.list() : Promise.resolve({ data: [] }),
-          hasPermission('requisitions') || hasPermission('approvals')
-            ? requisitionsApi.list()
-            : Promise.resolve({ data: [] }),
-        ]);
-        if (cancelled) return;
-        const tickets = tRes.data || [];
-        const reqs = rRes.data || [];
-        setTicketCount(tickets.length);
-        setReqCount(reqs.length);
-        const pending = reqs.filter((r) => {
-          const status = r.status || '';
-          const isPending = status.toLowerCase().includes('pending');
-          if (!isPending) return false;
-          if (hasPermission('approvals')) {
-            const approverId = r.approver_id ?? r.approverId;
-            if (approverId && user?.id && Number(approverId) === Number(user.id)) return true;
-            return true;
-          }
-          return false;
-        });
-        setPendingCount(pending.length);
-      } catch (_e) {
-        /* ignore */
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [hasPermission, user]);
 
   const visibleTiles = useMemo(
     () => HUB_TILES.filter((t) => hasPermission(t.slug)),
@@ -124,7 +78,7 @@ export default function DashboardPage() {
 
   if (!hasPermission('dashboard')) {
     return (
-      <AppShell title="Home Dashboard" subtitle="Centralized IT Helpdesk & Asset Procurement Portal.">
+      <AppShell title="Home Dashboard" subtitle="Centralized IT Service Desk & Asset Procurement Portal.">
         <AccessDenied moduleName="the Home Dashboard" />
       </AppShell>
     );
@@ -133,7 +87,7 @@ export default function DashboardPage() {
   return (
     <AppShell
       title={`Welcome, ${(user?.name || 'User').split(' ')[0]}`}
-      subtitle="Centralized IT Helpdesk & Asset Procurement Portal."
+      subtitle="Centralized IT Service Desk & Asset Procurement Portal."
       actions={(
         <>
           {hasPermission('tickets') ? (
@@ -149,35 +103,9 @@ export default function DashboardPage() {
         </>
       )}
     >
-      {loading ? (
-        <DataLoader label="Loading dashboard…" />
-      ) : (
-      <>
-      <div className="metrics-grid" style={{ marginBottom: 24 }}>
-        <div className="metric-card">
-          <div className="metric-info">
-            <h3>My / All Tickets</h3>
-            <div className="counter">{ticketCount}</div>
-          </div>
-          <div className="metric-icon icon-total"><i className="fa-solid fa-ticket" /></div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-info">
-            <h3>Asset Requisitions</h3>
-            <div className="counter">{reqCount}</div>
-          </div>
-          <div className="metric-icon icon-progress"><i className="fa-solid fa-cart-flatbed" /></div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-info">
-            <h3>Pending Actions</h3>
-            <div className="counter">{pendingCount}</div>
-          </div>
-          <div className="metric-icon icon-urgent"><i className="fa-solid fa-stamp" /></div>
-        </div>
-      </div>
+      <DashboardAnalytics />
 
-      <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 14, color: 'var(--text-main)' }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: '28px 0 14px', color: 'var(--text-main)' }}>
         Portal Modules & Quick Hub
       </h3>
       <div className="hub-tiles-grid">
@@ -198,8 +126,6 @@ export default function DashboardPage() {
           </div>
         ))}
       </div>
-      </>
-      )}
 
       <Modal
         open={ticketDisclaimer}

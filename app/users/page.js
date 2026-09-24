@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
@@ -8,7 +8,8 @@ import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '..
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { usersApi, rolesApi, departmentsApi } from '../../services/api';
+import { usersApi, rolesApi, departmentsApi, uploadsApi } from '../../services/api';
+import UserAvatar, { fileToAvatarUploadFile } from '../../components/UserAvatar';
 
 const PAGE_SIZE = 10;
 
@@ -22,6 +23,7 @@ const emptyForm = {
   status: 'Active',
   role_id: '',
   password: '',
+  avatar_url: '',
 };
 
 function generatePassword(length = 10) {
@@ -52,7 +54,7 @@ const QUICK_ADD_META = {
 };
 
 export default function UsersPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user: currentUser } = useAuth();
   const { showToast } = useToast();
   const [rows, setRows] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -68,6 +70,16 @@ export default function UsersPage() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarInputRef = useRef(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteRelated, setDeleteRelated] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferPreview, setTransferPreview] = useState(null);
+  const [transferFallbackRoleId, setTransferFallbackRoleId] = useState('');
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [pendingSaveBody, setPendingSaveBody] = useState(null);
 
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickType, setQuickType] = useState(null);
@@ -148,6 +160,11 @@ export default function UsersPage() {
     return [...new Set([...(departments.length ? departments : fallback), form.department].filter(Boolean))].sort();
   }, [departments, form.department]);
 
+  const fallbackRoles = useMemo(
+    () => roles.filter((r) => !r.is_it_admin && !r.is_approver),
+    [roles]
+  );
+
   function openCreate() {
     setEditingId(null);
     setForm({
@@ -170,8 +187,28 @@ export default function UsersPage() {
       status: u.status || 'Active',
       role_id: String(u.role_id || u.roleId || ''),
       password: '',
+      avatar_url: u.avatar_url || '',
     });
     setOpen(true);
+  }
+
+  async function onAvatarPick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setAvatarUploading(true);
+    try {
+      const prepared = await fileToAvatarUploadFile(file);
+      const up = await uploadsApi.upload(prepared);
+      const url = up.data?.url || null;
+      if (!url) throw new Error('Upload did not return a file URL');
+      setForm((f) => ({ ...f, avatar_url: url }));
+      showToast('Photo Uploaded', 'Profile photo saved to secure storage. Click Save User to apply.', 'success');
+    } catch (err) {
+      showToast('Error', err.message || 'Could not upload photo', 'error');
+    } finally {
+      setAvatarUploading(false);
+    }
   }
 
   function openQuickAdd(type) {
@@ -231,21 +268,6 @@ export default function UsersPage() {
     try {
       const roleId = Number(form.role_id);
       const role = roles.find((r) => Number(r.id) === roleId);
-      if (role && (role.is_it_admin || role.is_approver)) {
-        const kind = role.is_it_admin ? 'IT Admin' : 'Approver';
-        const occupied = rows.filter(
-          (u) => Number(u.role_id || u.roleId) === roleId && Number(u.id) !== Number(editingId)
-        );
-        if (occupied.length >= 1) {
-          showToast(
-            'Not allowed',
-            `${kind} role can only be assigned to one person (currently: ${occupied[0].name}). Change that user's role first.`,
-            'warning'
-          );
-          setSaving(false);
-          return;
-        }
-      }
       const body = {
         name: form.name,
         email: form.email,
@@ -255,17 +277,116 @@ export default function UsersPage() {
         phone: form.phone || undefined,
         status: form.status,
         role_id: roleId,
+        avatar_url: form.avatar_url || '',
       };
       if (form.password?.trim()) body.password = form.password.trim();
-      if (editingId) await usersApi.update(editingId, body);
-      else await usersApi.create(body);
-      showToast('Saved', editingId ? 'User updated.' : 'User created.', 'success');
-      setOpen(false);
-      await load();
+
+      if (role && (role.is_it_admin || role.is_approver)) {
+        try {
+          const previewRes = await usersApi.specialRoleTransferPreview({
+            role_id: roleId,
+            ...(editingId ? { for_user_id: editingId } : {}),
+          });
+          const preview = previewRes.data;
+          if (preview?.required) {
+            const defaultFallback =
+              fallbackRoles.find((r) => /staff|employee|user|member|general/i.test(r.name || '')) ||
+              fallbackRoles[0];
+            setTransferPreview(preview);
+            setTransferFallbackRoleId(defaultFallback ? String(defaultFallback.id) : '');
+            setPendingSaveBody(body);
+            setTransferOpen(true);
+            setSaving(false);
+            return;
+          }
+        } catch (previewErr) {
+          // If preview fails, continue — backend will still enforce transfer rules.
+          console.warn('Transfer preview failed', previewErr);
+        }
+      }
+
+      await saveUser(body);
     } catch (err) {
-      showToast('Error', err.message || 'Save failed', 'error');
+      if (err?.data?.code === 'SPECIAL_ROLE_TRANSFER_REQUIRED' && err?.data?.data) {
+        const preview = err.data.data;
+        const defaultFallback =
+          fallbackRoles.find((r) => /staff|employee|user|member|general/i.test(r.name || '')) ||
+          fallbackRoles[0];
+        setTransferPreview(preview);
+        setTransferFallbackRoleId(defaultFallback ? String(defaultFallback.id) : '');
+        setPendingSaveBody({
+          name: form.name,
+          email: form.email,
+          department: form.department,
+          designation: form.designation,
+          manager: form.manager,
+          phone: form.phone || undefined,
+          status: form.status,
+          role_id: Number(form.role_id),
+          avatar_url: form.avatar_url || '',
+          ...(form.password?.trim() ? { password: form.password.trim() } : {}),
+        });
+        setTransferOpen(true);
+      } else {
+        showToast('Error', err.message || 'Save failed', 'error');
+      }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveUser(body, transferOpts = null) {
+    const payload = { ...body };
+    if (transferOpts) {
+      payload.confirm_special_role_transfer = true;
+      if (transferOpts.demote_previous_to_role_id) {
+        payload.demote_previous_to_role_id = Number(transferOpts.demote_previous_to_role_id);
+      }
+    }
+
+    let res;
+    if (editingId) res = await usersApi.update(editingId, payload);
+    else {
+      const createBody = { ...payload, avatar_url: payload.avatar_url || null };
+      res = await usersApi.create(createBody);
+    }
+
+    const transfer = res?.transfer;
+    if (transfer?.transferred) {
+      const moved =
+        transfer.kind === 'Approver'
+          ? `${transfer.reassigned?.requisitions || 0} pending approval(s)`
+          : `${transfer.reassigned?.tickets || 0} open ticket(s) and ${transfer.reassigned?.requisitions || 0} IT-queue asset request(s)`;
+      showToast(
+        `${transfer.kind} transferred`,
+        `${transfer.previousHolder?.name} → ${form.name}. Moved: ${moved}. Previous role: ${transfer.demotedToRoleName || 'fallback'}.`,
+        'success'
+      );
+    } else {
+      showToast('Saved', editingId ? 'User updated.' : 'User created.', 'success');
+    }
+    setOpen(false);
+    setTransferOpen(false);
+    setTransferPreview(null);
+    setPendingSaveBody(null);
+    await load();
+  }
+
+  async function confirmTransfer() {
+    if (!pendingSaveBody || !transferPreview) return;
+    if (!transferFallbackRoleId) {
+      showToast('Required', 'Choose a role for the previous person.', 'warning');
+      return;
+    }
+    setTransferBusy(true);
+    try {
+      await saveUser(pendingSaveBody, {
+        demote_previous_to_role_id: transferFallbackRoleId,
+      });
+    } catch (err) {
+      showToast('Error', err.message || 'Transfer failed', 'error');
+    } finally {
+      setTransferBusy(false);
     }
   }
 
@@ -286,14 +407,56 @@ export default function UsersPage() {
     }
   }
 
-  async function remove(id) {
-    if (!window.confirm('Delete this user?')) return;
+  async function askDelete(u) {
+    if (Number(u.id) === Number(currentUser?.id)) {
+      showToast('Not allowed', 'You cannot delete your own account.', 'warning');
+      return;
+    }
+    if ((u.status || '') === 'Deleted') {
+      showToast('Already deleted', 'Use Restore to reactivate this user.', 'info');
+      return;
+    }
+    setDeleteBusy(true);
+    setDeleteTarget(u);
+    setDeleteRelated(null);
     try {
-      await usersApi.remove(id);
-      showToast('Deleted', 'User removed.', 'info');
+      const res = await usersApi.relatedSummary(u.id);
+      setDeleteRelated(res.data?.related || {});
+    } catch (err) {
+      showToast('Error', err.message || 'Could not load linked records', 'error');
+      setDeleteTarget(null);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  async function confirmSoftDelete() {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    try {
+      await usersApi.remove(deleteTarget.id);
+      showToast(
+        'User soft-deleted',
+        `${deleteTarget.name} can no longer sign in. Tickets, requests, and assets stay linked.`,
+        'info'
+      );
+      setDeleteTarget(null);
+      setDeleteRelated(null);
       await load();
     } catch (err) {
       showToast('Error', err.message || 'Delete failed', 'error');
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  async function restoreUser(id) {
+    try {
+      await usersApi.restore(id);
+      showToast('Restored', 'User is Active again and can sign in.', 'success');
+      await load();
+    } catch (err) {
+      showToast('Error', err.message || 'Restore failed', 'error');
     }
   }
 
@@ -361,10 +524,11 @@ export default function UsersPage() {
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
-          <select className="form-control form-control-select" style={{ width: 130 }} value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+          <select className="form-control form-control-select" style={{ width: 140 }} value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
             <option value="All">All Status</option>
             <option value="Active">Active</option>
             <option value="Suspended">Suspended</option>
+            <option value="Deleted">Deleted</option>
           </select>
           <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
             <i className="fa-solid fa-filter-circle-xmark" /> Clear
@@ -401,22 +565,30 @@ export default function UsersPage() {
               pageRows.map((u) => (
                 <tr key={u.id}>
                   <td><strong>#{u.id}</strong></td>
-                  <td>{u.name}</td>
+                  <td><UserAvatar name={u.name} src={u.avatar_url} size="table" /></td>
                   <td>{u.email}</td>
                   <td>{roleName(u)}</td>
                   <td>{u.department || '—'}</td>
                   <td>{u.designation || '—'}</td>
                   <td><span className={statusBadgeClass(u.status)}>{u.status}</span></td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <button type="button" className="btn btn-secondary btn-sm" title="Edit" onClick={() => openEdit(u)}>
-                      <i className="fa-solid fa-pen" />
-                    </button>{' '}
-                    <button type="button" className="btn btn-info btn-sm" title="Send password setup" onClick={() => sendSetup(u.id)}>
-                      <i className="fa-solid fa-envelope" />
-                    </button>{' '}
-                    <button type="button" className="btn btn-danger btn-sm" title="Delete" onClick={() => remove(u.id)}>
-                      <i className="fa-solid fa-trash" />
-                    </button>
+                    {(u.status || '') === 'Deleted' ? (
+                      <button type="button" className="btn btn-success btn-sm" title="Restore user" onClick={() => restoreUser(u.id)}>
+                        <i className="fa-solid fa-rotate-left" /><span> Restore</span>
+                      </button>
+                    ) : (
+                      <>
+                        <button type="button" className="btn btn-secondary btn-sm" title="Edit" onClick={() => openEdit(u)}>
+                          <i className="fa-solid fa-pen" />
+                        </button>{' '}
+                        <button type="button" className="btn btn-info btn-sm" title="Send password setup" onClick={() => sendSetup(u.id)}>
+                          <i className="fa-solid fa-envelope" />
+                        </button>{' '}
+                        <button type="button" className="btn btn-danger btn-sm" title="Soft delete" onClick={() => askDelete(u)}>
+                          <i className="fa-solid fa-trash" />
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))
@@ -441,6 +613,46 @@ export default function UsersPage() {
         )}
       >
         <form id="userForm" onSubmit={submit} autoComplete="off">
+          <div className="form-group user-form-avatar-row">
+            <div className="user-form-avatar-preview">
+              <UserAvatar name={form.name || 'User'} src={form.avatar_url || null} size="lg" showName={false} />
+            </div>
+            <div className="user-form-avatar-actions">
+              <label style={{ marginBottom: 6, display: 'block' }}>Profile Photo</label>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.45 }}>
+                Upload a photo — stored encrypted in the database (same as ticket attachments).
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={avatarUploading || saving}
+                  onClick={() => avatarInputRef.current?.click()}
+                >
+                  <i className={`fa-solid ${avatarUploading ? 'fa-spinner fa-spin' : 'fa-camera'}`} />
+                  <span>{avatarUploading ? 'Uploading…' : (form.avatar_url ? 'Change Photo' : 'Upload Photo')}</span>
+                </button>
+                {form.avatar_url ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    disabled={avatarUploading || saving}
+                    onClick={() => setForm((f) => ({ ...f, avatar_url: '' }))}
+                  >
+                    <i className="fa-solid fa-trash" /><span>Remove</span>
+                  </button>
+                ) : null}
+              </div>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+                hidden
+                onChange={onAvatarPick}
+              />
+            </div>
+          </div>
+
           <div className="form-grid-2">
             <div className="form-group">
               <label>Full Name *</label>
@@ -499,22 +711,22 @@ export default function UsersPage() {
                 onChange={(e) => {
                   const roleId = e.target.value;
                   const role = roles.find((r) => String(r.id) === String(roleId));
+                  setForm((f) => ({ ...f, role_id: roleId }));
                   if (role && (role.is_it_admin || role.is_approver)) {
                     const occupied = rows.filter(
                       (u) =>
+                        (u.status || '') !== 'Deleted' &&
                         Number(u.role_id || u.roleId) === Number(roleId) &&
                         Number(u.id) !== Number(editingId)
                     );
                     if (occupied.length >= 1) {
                       showToast(
-                        'Not allowed',
-                        `This role can only be assigned to one person (currently: ${occupied[0].name}).`,
-                        'warning'
+                        'Transfer required',
+                        `${role.is_it_admin ? 'IT Admin' : 'Approver'} is currently ${occupied[0].name}. Saving will ask you to confirm moving pending work to this person.`,
+                        'info'
                       );
-                      return;
                     }
                   }
-                  setForm((f) => ({ ...f, role_id: roleId }));
                 }}
               >
                 <option value="">Select role</option>
@@ -649,6 +861,174 @@ export default function UsersPage() {
             }}
           />
         </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(deleteTarget)}
+        title="Soft Delete User?"
+        icon="fa-triangle-exclamation"
+        onClose={() => {
+          if (deleteBusy) return;
+          setDeleteTarget(null);
+          setDeleteRelated(null);
+        }}
+        maxWidth={520}
+        footer={(
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={deleteBusy}
+              onClick={() => { setDeleteTarget(null); setDeleteRelated(null); }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={deleteBusy || !deleteRelated}
+              onClick={confirmSoftDelete}
+            >
+              <i className={`fa-solid ${deleteBusy ? 'fa-spinner fa-spin' : 'fa-trash'}`} />
+              <span>{deleteBusy ? 'Deleting…' : 'Soft Delete User'}</span>
+            </button>
+          </>
+        )}
+      >
+        {deleteTarget ? (
+          <div>
+            <p style={{ marginTop: 0, lineHeight: 1.5 }}>
+              You are about to soft-delete <strong>{deleteTarget.name}</strong> ({deleteTarget.email}).
+              They will no longer be able to sign in.
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Linked tickets, asset requests, assets, and uploads are <strong>not removed</strong> —
+              they stay linked to this user so history remains intact. You can restore the account later
+              from the Deleted filter.
+            </p>
+            {!deleteRelated ? (
+              <p style={{ marginBottom: 0 }}>
+                <i className="fa-solid fa-spinner fa-spin" /> Loading linked records…
+              </p>
+            ) : (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  background: 'rgba(220, 38, 38, 0.08)',
+                  border: '1px solid rgba(220, 38, 38, 0.25)',
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>Linked records that will remain:</div>
+                <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                  <li>Tickets: <strong>{deleteRelated.tickets ?? 0}</strong></li>
+                  <li>Asset requests (as requester): <strong>{deleteRelated.requisitions ?? 0}</strong></li>
+                  <li>Approvals assigned: <strong>{deleteRelated.approvals_assigned ?? 0}</strong></li>
+                  <li>Assigned assets: <strong>{deleteRelated.assets ?? 0}</strong></li>
+                  <li>Uploads: <strong>{deleteRelated.uploads ?? 0}</strong></li>
+                  <li>Audit log entries: <strong>{deleteRelated.audit_logs ?? 0}</strong></li>
+                </ul>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={transferOpen}
+        title={`Transfer ${transferPreview?.kind || 'role'}?`}
+        icon="fa-triangle-exclamation"
+        onClose={() => {
+          if (transferBusy) return;
+          setTransferOpen(false);
+          setTransferPreview(null);
+          setPendingSaveBody(null);
+        }}
+        maxWidth={540}
+        footer={(
+          <>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={transferBusy}
+              onClick={() => {
+                setTransferOpen(false);
+                setTransferPreview(null);
+                setPendingSaveBody(null);
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={transferBusy || !transferFallbackRoleId}
+              onClick={confirmTransfer}
+            >
+              <i className={`fa-solid ${transferBusy ? 'fa-spinner fa-spin' : 'fa-check'}`} />
+              <span>{transferBusy ? 'Transferring…' : 'Confirm & Transfer'}</span>
+            </button>
+          </>
+        )}
+      >
+        {transferPreview ? (
+          <div>
+            <p style={{ marginTop: 0, lineHeight: 1.55 }}>
+              <strong>{transferPreview.kind}</strong> is currently assigned to{' '}
+              <strong>{transferPreview.currentHolder?.name}</strong>
+              {transferPreview.currentHolder?.email
+                ? ` (${transferPreview.currentHolder.email})`
+                : ''}
+              .
+            </p>
+            <div
+              style={{
+                marginTop: 4,
+                marginBottom: 14,
+                padding: '12px 14px',
+                borderRadius: 8,
+                background: 'rgba(217, 119, 6, 0.1)',
+                border: '1px solid rgba(217, 119, 6, 0.35)',
+                lineHeight: 1.55,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                <i className="fa-solid fa-exclamation-triangle" style={{ marginRight: 6 }} />
+                Warning
+              </div>
+              {transferPreview.kind === 'Approver' ? (
+                <p style={{ margin: 0 }}>
+                  All <strong>{transferPreview.pending?.requisitions ?? 0}</strong> pending
+                  approval(s) will be assigned to <strong>{form.name || 'the new person'}</strong>.
+                </p>
+              ) : (
+                <p style={{ margin: 0 }}>
+                  All <strong>{transferPreview.pending?.tickets ?? 0}</strong> open ticket(s)
+                  assigned to the current IT Admin, and{' '}
+                  <strong>{transferPreview.pending?.requisitions ?? 0}</strong> IT-queue asset
+                  request(s), will move to <strong>{form.name || 'the new person'}</strong>.
+                </p>
+              )}
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>New role for {transferPreview.currentHolder?.name || 'previous person'} *</label>
+              <select
+                className="form-control form-control-select"
+                value={transferFallbackRoleId}
+                onChange={(e) => setTransferFallbackRoleId(e.target.value)}
+              >
+                <option value="">Select role</option>
+                {fallbackRoles.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                They will lose the {transferPreview.kind} designation and keep signing in with this role.
+              </p>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </AppShell>
   );

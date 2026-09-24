@@ -88,7 +88,7 @@ export default function LoginNoticeModal() {
         }
 
         setTitle(`Welcome Overview — ${name}`);
-        setMessage(`Hello ${name}, here is your current IT Helpdesk & Portal status:`);
+        setMessage(`Hello ${name}, here is your current IT Service Desk & Portal status:`);
         setItems(nextItems);
         setActionHref(nextAction);
         setActionLabel(nextActionLabel);

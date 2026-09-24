@@ -1,4 +1,4 @@
-# Integriti Helpdesk — Frontend
+# IT Service Desk — Frontend
 
 Independent Next.js app. Deployable on its own (separate host/domain from the backend). Talks to the API over REST only — no direct database access.
 

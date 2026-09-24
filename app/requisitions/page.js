@@ -10,6 +10,8 @@ import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { requisitionsApi, catalogApi, usersApi, uploadsApi, aiApi } from '../../services/api';
+import UserAvatar from '../../components/UserAvatar';
+import { useAvatarDirectory } from '../../hooks/useAvatarDirectory';
 
 const PAGE_SIZE = 10;
 
@@ -41,6 +43,7 @@ export default function RequisitionsPage() {
 
 function RequisitionsPageInner() {
   const { hasPermission, canViewAll, user, role } = useAuth();
+  const { avatarFor } = useAvatarDirectory();
   const { showToast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -48,9 +51,29 @@ function RequisitionsPageInner() {
     Boolean(role?.is_it_admin) ||
     Boolean(role?.is_approver) ||
     Boolean(role?.is_executive);
+  const isItAdmin = Boolean(role?.is_it_admin);
+  // Approver/Executive may see IT-queue items on Asset Requests (already signed off).
+  // IT Admin + Staff keep those under Pending Approvals until Completed.
+  const hideItQueueOnAssetRequests =
+    isItAdmin || (!Boolean(role?.is_approver) && !Boolean(role?.is_executive));
+  const IT_QUEUE_STATUSES = [
+    'Approved - Sent to IT',
+    'In Progress',
+    'In Procurement',
+    'On Hold',
+  ];
   const isItOverride = canViewAll('requisitions') || Boolean(role?.is_it_admin);
   const isApproverCreator = Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
+  const isExecutiveCreator =
+    Boolean(role?.is_executive) && !Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
   const signerLabel = isApproverCreator ? 'Executive' : 'Approver';
+
+  function isExecutivePriority(r) {
+    if (!r) return false;
+    if (r.requester_is_executive === true || r.requesterIsExecutive === true) return true;
+    const hist = String(r.decision_history || r.decisionHistory || '');
+    return hist.includes('EXECUTIVE_PRIORITY');
+  }
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -156,6 +179,21 @@ function RequisitionsPageInner() {
       requester_email: user?.email || '',
     });
     setCreateOpen(true);
+
+    // Executive: skip manager approval — no Approver selection
+    if (isExecutiveCreator) {
+      setApprovers([]);
+      try {
+        if (isItOverride) {
+          const dirRes = await usersApi.directory();
+          setDirectory((dirRes.data || []).filter((u) => (u.status || 'Active') === 'Active'));
+        }
+      } catch (_e) {
+        setDirectory([]);
+      }
+      return;
+    }
+
     try {
       const signerReq = isApproverCreator ? usersApi.executives() : usersApi.approvers();
       const [signerRes, dirRes] = await Promise.all([
@@ -193,8 +231,14 @@ function RequisitionsPageInner() {
       const status = r.status || '';
       const isPending =
         status === 'Pending Manager Approval' || status.toLowerCase().includes('pending');
-      // Pending lives only under Pending Approvals
+      // Manager-pending lives only under Pending Approvals
       if (isPending) return false;
+
+      // Still awaiting IT Admin action → Pending Approvals for IT Admin & Staff
+      // Approver/Executive already signed off, so they may see these here
+      if (hideItQueueOnAssetRequests && IT_QUEUE_STATUSES.includes(status)) {
+        return false;
+      }
 
       const requesterEmail = (r.requester_email || r.requesterEmail || '').toLowerCase();
       if (mineOnly && myEmail && requesterEmail !== myEmail) return false;
@@ -210,7 +254,7 @@ function RequisitionsPageInner() {
       ].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, search, statusFilter, mineOnly, user?.email]);
+  }, [rows, search, statusFilter, mineOnly, user?.email, hideItQueueOnAssetRequests]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -233,9 +277,12 @@ function RequisitionsPageInner() {
     const total = filtered.length;
     const inProgress = filtered.filter((r) => {
       const s = (r.status || '').toLowerCase();
-      return s.includes('approved') || s.includes('procurement') || s.includes('hold');
+      return s.includes('approved') || s.includes('progress') || s.includes('procurement') || s.includes('hold');
     }).length;
-    const fulfilled = filtered.filter((r) => (r.status || '').toLowerCase().includes('fulfilled')).length;
+    const fulfilled = filtered.filter((r) => {
+      const s = (r.status || '').toLowerCase();
+      return s.includes('fulfilled') || s.includes('completed');
+    }).length;
     const rejected = filtered.filter((r) => (r.status || '').toLowerCase().includes('reject')).length;
     return { total, pending: inProgress, approved: fulfilled, rejected };
   }, [filtered]);
@@ -259,6 +306,11 @@ function RequisitionsPageInner() {
         attachment_url = up.data?.url || null;
       }
       const approver = approvers.find((u) => String(u.id) === String(form.approver_id));
+      if (!isExecutiveCreator && !form.approver_id) {
+        showToast('Required', `Please select a ${signerLabel}.`, 'warning');
+        setSaving(false);
+        return;
+      }
       await requisitionsApi.create({
         type: form.type,
         item,
@@ -266,14 +318,20 @@ function RequisitionsPageInner() {
         urgency: form.urgency,
         justification: form.justification,
         department: form.department || user?.department,
-        approver_id: Number(form.approver_id),
-        approver_name: approver?.name,
+        approver_id: isExecutiveCreator ? undefined : Number(form.approver_id),
+        approver_name: isExecutiveCreator ? undefined : approver?.name,
         requester_name: form.requester_name || user?.name,
         requester_email: form.requester_email || user?.email,
         attachment_url,
         on_behalf: Boolean(form.behalf_name?.trim()),
       });
-      showToast('Submitted', 'Request sent for approval. Track it under Pending Approvals.', 'success');
+      showToast(
+        'Submitted',
+        isExecutiveCreator
+          ? 'Executive Priority request auto-approved and sent to IT Admin.'
+          : 'Request sent for approval. Track it under Pending Approvals.',
+        'success'
+      );
       setCreateOpen(false);
       setForm(emptyForm);
       setAttachFile(null);
@@ -319,7 +377,7 @@ function RequisitionsPageInner() {
   return (
     <AppShell
       title="Asset Requests"
-      subtitle="Approved and completed asset requisitions. New submissions appear under Pending Approvals until signed off."
+      subtitle="Completed and rejected asset requisitions. Requests still awaiting manager or IT Admin approval stay under Pending Approvals."
       actions={(
         <button
           type="button"
@@ -340,7 +398,7 @@ function RequisitionsPageInner() {
           <div className="metric-icon icon-progress"><i className="fa-solid fa-gears" /></div>
         </div>
         <div className="metric-card">
-          <div className="metric-info"><h3>Fulfilled</h3><div className="counter">{kpis.approved}</div></div>
+          <div className="metric-info"><h3>Completed</h3><div className="counter">{kpis.approved}</div></div>
           <div className="metric-icon icon-resolved"><i className="fa-solid fa-circle-check" /></div>
         </div>
         <div className="metric-card">
@@ -388,11 +446,17 @@ function RequisitionsPageInner() {
               onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
             >
               <option value="All">All Statuses</option>
-              <option value="Approved - Sent to IT">Approved - Sent to IT</option>
-              <option value="In Procurement">In Procurement</option>
+              {!hideItQueueOnAssetRequests ? (
+                <>
+                  <option value="Approved - Sent to IT">Approved - Sent to IT</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="In Procurement">In Procurement</option>
+                  <option value="On Hold">On Hold</option>
+                </>
+              ) : null}
+              <option value="Completed">Completed</option>
               <option value="Fulfilled">Fulfilled</option>
               <option value="Rejected">Rejected</option>
-              <option value="On Hold">On Hold</option>
             </select>
           </div>
           <TableExportButtons
@@ -428,15 +492,31 @@ function RequisitionsPageInner() {
                 <tr key={pid(r)}>
                   <td><strong>#{pid(r)}</strong></td>
                   <td>
-                    {r.requester_name || r.requesterName}
-                    <br />
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.department}</span>
+                    <UserAvatar
+                      name={r.requester_name || r.requesterName}
+                      src={avatarFor({
+                        email: r.requester_email || r.requesterEmail,
+                        name: r.requester_name || r.requesterName,
+                      })}
+                      size="table"
+                      sub={r.department}
+                    />
                   </td>
                   <td>{r.type}</td>
                   <td>{r.item}</td>
                   <td>{r.urgency}</td>
                   <td>{r.approver_name || r.approverName}</td>
-                  <td><span className={statusBadgeClass(r.status)}>{r.status}</span></td>
+                  <td>
+                    <span className={statusBadgeClass(r.status)}>{r.status}</span>
+                    {isExecutivePriority(r) ? (
+                      <>
+                        {' '}
+                        <span className="badge badge-sla-warning" title="Executive Priority — auto-approved to IT">
+                          Executive Priority
+                        </span>
+                      </>
+                    ) : null}
+                  </td>
                   <td>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openDetail(pid(r))}>
                       <i className="fa-solid fa-eye" /><span>Details</span>
@@ -508,30 +588,38 @@ function RequisitionsPageInner() {
 
           <div className="form-grid-2">
             <div className="form-group">
-              <label>Designated {signerLabel} *</label>
-              <select
-                className="form-control form-control-select"
-                required
-                value={form.approver_id}
-                onChange={(e) => setForm((f) => ({ ...f, approver_id: e.target.value }))}
-              >
-                {approvers.length === 0 ? (
-                  <option value="">
-                    {isApproverCreator
-                      ? 'No Executive configured — set Executive role in Role Management'
-                      : 'No Approver configured — set Approver role in Role Management'}
-                  </option>
-                ) : (
-                  <>
-                    {approvers.length > 1 ? <option value="">Select {signerLabel}</option> : null}
-                    {approvers.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.email})
-                      </option>
-                    ))}
-                  </>
-                )}
-              </select>
+              <label>{isExecutiveCreator ? 'Approver' : `Designated ${signerLabel} *`}</label>
+              {isExecutiveCreator ? (
+                <input
+                  className="form-control"
+                  readOnly
+                  value="Auto-approved → Sent to IT Admin"
+                />
+              ) : (
+                <select
+                  className="form-control form-control-select"
+                  required
+                  value={form.approver_id}
+                  onChange={(e) => setForm((f) => ({ ...f, approver_id: e.target.value }))}
+                >
+                  {approvers.length === 0 ? (
+                    <option value="">
+                      {isApproverCreator
+                        ? 'No Executive configured — set Executive role in Role Management'
+                        : 'No Approver configured — set Approver role in Role Management'}
+                    </option>
+                  ) : (
+                    <>
+                      {approvers.length > 1 ? <option value="">Select {signerLabel}</option> : null}
+                      {approvers.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.name} ({u.email})
+                        </option>
+                      ))}
+                    </>
+                  )}
+                </select>
+              )}
             </div>
             <div className="form-group">
               <label>Urgency / Timeline *</label>
@@ -546,6 +634,13 @@ function RequisitionsPageInner() {
               </select>
             </div>
           </div>
+
+          {isExecutiveCreator ? (
+            <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+              <i className="fa-solid fa-circle-info" style={{ marginRight: 6, color: 'var(--warning)' }} />
+              Executive Priority: manager approval is skipped. This request goes directly to IT Admin.
+            </p>
+          ) : null}
 
           <div className="sla-live-preview-box">
             <i className="fa-solid fa-truck-ramp-box" />
@@ -660,7 +755,15 @@ function RequisitionsPageInner() {
         {detail ? (
           <>
             <div className="ticket-status-banner">
-              <div><strong>Status:</strong> <span className={statusBadgeClass(detail.status)}>{detail.status}</span></div>
+              <div>
+                <strong>Status:</strong> <span className={statusBadgeClass(detail.status)}>{detail.status}</span>
+                {isExecutivePriority(detail) ? (
+                  <>
+                    {' '}
+                    <span className="badge badge-sla-warning">Executive Priority</span>
+                  </>
+                ) : null}
+              </div>
               <div><strong>Approver:</strong> {detail.approver_name || detail.approverName}</div>
               <div style={{ color: 'var(--text-muted)', fontSize: 12, width: '100%', marginTop: 4 }}>
                 Created: {detail.created_timestamp || detail.createdTimestamp

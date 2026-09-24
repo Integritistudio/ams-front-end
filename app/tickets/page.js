@@ -10,6 +10,8 @@ import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { ticketsApi, departmentsApi, usersApi, uploadsApi, aiApi } from '../../services/api';
+import UserAvatar from '../../components/UserAvatar';
+import { useAvatarDirectory } from '../../hooks/useAvatarDirectory';
 
 const PAGE_SIZE = 10;
 const CATEGORIES = [
@@ -80,16 +82,27 @@ export default function TicketsPage() {
 }
 
 function TicketsPageInner() {
-  const { hasPermission, canViewAll, user } = useAuth();
+  const { hasPermission, canViewAll, user, role } = useAuth();
+  const { avatarFor } = useAvatarDirectory();
   const { showToast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const isAdmin = canViewAll('tickets');
+  const canSeeAll =
+    canViewAll('tickets') ||
+    Boolean(role?.is_it_admin) ||
+    Boolean(role?.is_approver) ||
+    Boolean(role?.is_executive);
+  const isItAdmin = Boolean(role?.is_it_admin);
+  const isElevated =
+    Boolean(role?.is_it_admin) ||
+    Boolean(role?.is_approver) ||
+    Boolean(role?.is_executive);
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [mineOnly, setMineOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [departments, setDepartments] = useState(DEFAULT_DEPTS);
 
@@ -223,8 +236,19 @@ function TicketsPageInner() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const myEmail = (user?.email || '').toLowerCase();
+    const myName = (user?.name || '').toLowerCase();
     return rows.filter((t) => {
       if (statusFilter !== 'All' && t.status !== statusFilter) return false;
+      if (mineOnly && isElevated) {
+        const requesterEmail = (t.requester_email || t.requesterEmail || '').toLowerCase();
+        const assigned = String(t.assigned_to || t.assignedTo || '').toLowerCase();
+        const isMine =
+          (myEmail && requesterEmail === myEmail) ||
+          (myEmail && assigned === myEmail) ||
+          (myName && assigned === myName);
+        if (!isMine) return false;
+      }
       if (!q) return true;
       const hay = [
         pid(t),
@@ -235,7 +259,7 @@ function TicketsPageInner() {
       ].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, search, statusFilter]);
+  }, [rows, search, statusFilter, mineOnly, isElevated, user?.email, user?.name]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -344,7 +368,7 @@ function TicketsPageInner() {
 
   return (
     <AppShell
-      title={isAdmin ? 'All Tickets' : 'My Tickets'}
+      title={canSeeAll ? 'All Tickets' : 'My Tickets'}
       subtitle="Raise technical support requests and track SLA progress."
       actions={(
         <button
@@ -359,7 +383,7 @@ function TicketsPageInner() {
       <div className="metrics-grid">
         <div className="metric-card">
           <div className="metric-info">
-            <h3>{isAdmin ? 'Total Tickets' : 'My Tickets'}</h3>
+            <h3>{canSeeAll && !mineOnly ? 'Total Tickets' : 'My Tickets'}</h3>
             <div className="counter">{kpis.total}</div>
           </div>
           <div className="metric-icon icon-total"><i className="fa-solid fa-ticket" /></div>
@@ -390,6 +414,26 @@ function TicketsPageInner() {
       <div className="table-toolbar">
         <div className="toolbar-left"><h2>Support Tickets</h2></div>
         <div className="toolbar-controls-group">
+          {isElevated ? (
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                margin: 0,
+                fontSize: 13,
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={mineOnly}
+                onChange={(e) => { setMineOnly(e.target.checked); setPage(1); }}
+              />
+              My Tickets
+            </label>
+          ) : null}
           <div className="search-box">
             <i className="fa-solid fa-magnifying-glass" />
             <input
@@ -447,9 +491,15 @@ function TicketsPageInner() {
                   <tr key={pid(t)}>
                     <td><strong>#{pid(t)}</strong></td>
                     <td>
-                      {t.requester_name || t.requesterName}
-                      <br />
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t.department}</span>
+                      <UserAvatar
+                        name={t.requester_name || t.requesterName}
+                        src={avatarFor({
+                          email: t.requester_email || t.requesterEmail,
+                          name: t.requester_name || t.requesterName,
+                        })}
+                        size="table"
+                        sub={t.department}
+                      />
                     </td>
                     <td>{t.subject}</td>
                     <td>{t.category}</td>
@@ -488,7 +538,7 @@ function TicketsPageInner() {
         )}
       >
         <form id="newTicketForm" onSubmit={submitCreate} autoComplete="off">
-          {isAdmin ? (
+          {isItAdmin ? (
             <div
               className="form-group"
               style={{
@@ -652,7 +702,7 @@ function TicketsPageInner() {
         footer={(
           <>
             <button type="button" className="btn btn-secondary" onClick={() => setDetailOpen(false)}>Close</button>
-            {!status.includes('resolved') ? (
+            {isItAdmin && !status.includes('resolved') ? (
               <button type="button" className="btn btn-primary" disabled={saving} onClick={saveDetail}>
                 <i className="fa-solid fa-floppy-disk" /><span>Save Changes</span>
               </button>
@@ -676,7 +726,7 @@ function TicketsPageInner() {
               </div>
             </div>
 
-            {isAdmin && !status.includes('resolved') ? (
+            {isItAdmin && !status.includes('resolved') ? (
               <div className="admin-ticket-action-bar">
                 <div className="admin-action-info">
                   <i className="fa-solid fa-user-shield" /><span>IT Support Actions:</span>
@@ -735,7 +785,7 @@ function TicketsPageInner() {
                 <label>Priority Level</label>
                 <select
                   className="form-control form-control-select"
-                  disabled={status.includes('resolved')}
+                  disabled={!isItAdmin || status.includes('resolved')}
                   value={editForm.priority || ''}
                   onChange={(e) => setEditForm((f) => ({ ...f, priority: e.target.value }))}
                 >
@@ -748,7 +798,7 @@ function TicketsPageInner() {
                 <label>Issue Category</label>
                 <select
                   className="form-control form-control-select"
-                  disabled={status.includes('resolved')}
+                  disabled={!isItAdmin || status.includes('resolved')}
                   value={editForm.category || ''}
                   onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))}
                 >
@@ -760,7 +810,7 @@ function TicketsPageInner() {
               <label>Subject</label>
               <input
                 className="form-control"
-                disabled={status.includes('resolved')}
+                disabled={!isItAdmin || status.includes('resolved')}
                 value={editForm.subject || ''}
                 onChange={(e) => setEditForm((f) => ({ ...f, subject: e.target.value }))}
               />
@@ -769,7 +819,7 @@ function TicketsPageInner() {
               <label>Description</label>
               <textarea
                 className="form-control"
-                disabled={status.includes('resolved')}
+                disabled={!isItAdmin || status.includes('resolved')}
                 value={editForm.description || ''}
                 onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
               />

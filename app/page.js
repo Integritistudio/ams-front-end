@@ -14,5 +14,5 @@ export default function HomePage() {
     router.replace(isAuthenticated ? '/dashboard' : '/login');
   }, [isAuthenticated, loading, router]);
 
-  return <DataLoader variant="page" label="Starting Integriti Helpdesk…" />;
+  return <DataLoader variant="page" label="Starting IT Service Desk…" />;
 }

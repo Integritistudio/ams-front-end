@@ -8,9 +8,16 @@ import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '..
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { procurementApi, vendorsApi, usersApi } from '../../services/api';
+import { procurementApi, vendorsApi, usersApi, requisitionsApi } from '../../services/api';
 
 const PAGE_SIZE = 10;
+
+const PENDING_REQ_STATUSES = [
+  'Approved - Sent to IT',
+  'In Progress',
+  'In Procurement',
+  'On Hold',
+];
 
 function pid(r) {
   return r?.public_id || r?.publicId || r?.id;
@@ -21,6 +28,7 @@ function todayISO() {
 }
 
 const emptyForm = {
+  source_req_id: '',
   item_name: '',
   vendor: '',
   cost: '',
@@ -37,13 +45,14 @@ const emptyForm = {
 };
 
 export default function ProcurementPage() {
-  const { hasPermission, canViewAll } = useAuth();
+  const { hasPermission, role } = useAuth();
   const { showToast } = useToast();
-  const canEdit = hasPermission('assign_assets') || canViewAll('procurement_log');
+  const canEdit = Boolean(role?.is_it_admin);
 
   const [rows, setRows] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [employees, setEmployees] = useState([]);
+  const [pendingReqs, setPendingReqs] = useState([]);
   const [defaultApprover, setDefaultApprover] = useState('');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -69,6 +78,16 @@ export default function ProcurementPage() {
       setLoading(false);
     }
   }, [showToast]);
+
+  const loadPendingReqs = useCallback(async () => {
+    try {
+      const res = await requisitionsApi.list();
+      const list = (res.data || []).filter((r) => PENDING_REQ_STATUSES.includes(r.status));
+      setPendingReqs(list);
+    } catch {
+      setPendingReqs([]);
+    }
+  }, []);
 
   useEffect(() => {
     if (!hasPermission('procurement_log')) return;
@@ -134,9 +153,38 @@ export default function ProcurementPage() {
     }
   }
 
-  function openCreate() {
+  function applySourceReq(reqIdOrPublic) {
+    if (!reqIdOrPublic) {
+      setForm((f) => ({ ...f, source_req_id: '' }));
+      return;
+    }
+    const found = pendingReqs.find(
+      (r) => String(r.id) === String(reqIdOrPublic) || String(pid(r)) === String(reqIdOrPublic)
+    );
+    if (!found) {
+      setForm((f) => ({ ...f, source_req_id: reqIdOrPublic }));
+      return;
+    }
+    const email = found.requester_email || found.requesterEmail || '';
+    const name = found.requester_name || found.requesterName || '';
+    setForm((f) => ({
+      ...f,
+      source_req_id: String(found.id),
+      item_name: found.item || f.item_name,
+      employee_name: name,
+      assigned_user_email: email,
+      department: found.department || '',
+      approver: found.approver_name || found.approverName || f.approver || defaultApprover,
+      description: found.justification
+        ? `Linked to ${pid(found)}: ${found.justification}`
+        : `Linked to asset request ${pid(found)}`,
+    }));
+  }
+
+  async function openCreate() {
     setEditingId(null);
     const today = todayISO();
+    await loadPendingReqs();
     setForm({
       ...emptyForm,
       approval_date: today,
@@ -152,6 +200,7 @@ export default function ProcurementPage() {
     const email = row.assigned_user_email || row.assignedUserEmail || '';
     const match = employees.find((u) => String(u.email || '').toLowerCase() === String(email).toLowerCase());
     setForm({
+      source_req_id: row.source_req_id || row.sourceReqId || '',
       item_name: row.item_name || row.itemName || '',
       vendor: row.vendor || '',
       cost: row.cost ?? '',
@@ -186,6 +235,7 @@ export default function ProcurementPage() {
     setSaving(true);
     try {
       const body = {
+        source_req_id: form.source_req_id || null,
         item_name: form.item_name.trim(),
         vendor: form.vendor.trim(),
         cost: form.cost.trim() || null,
@@ -201,7 +251,15 @@ export default function ProcurementPage() {
       };
       if (editingId) await procurementApi.update(editingId, body);
       else await procurementApi.create(body);
-      showToast('Saved', editingId ? 'Procurement entry updated.' : 'Procurement entry saved & delivery recorded.', 'success');
+      showToast(
+        'Saved',
+        editingId
+          ? 'Procurement entry updated.'
+          : form.source_req_id
+            ? 'Procurement saved — linked asset request marked Completed.'
+            : 'Procurement entry saved & delivery recorded.',
+        'success'
+      );
       setOpen(false);
       await load();
     } catch (err) {
@@ -329,6 +387,29 @@ export default function ProcurementPage() {
         )}
       >
         <form id="procForm" onSubmit={submit} autoComplete="off">
+          {!editingId ? (
+            <div className="form-group">
+              <label>Link Pending Asset Request</label>
+              <select
+                className="form-control form-control-select"
+                value={form.source_req_id}
+                onChange={(e) => applySourceReq(e.target.value)}
+              >
+                <option value="">None — ad-hoc procurement (no linked request)</option>
+                {pendingReqs.map((r) => (
+                  <option key={r.id || pid(r)} value={String(r.id)}>
+                    #{pid(r)} — {r.item} ({r.requester_name || r.requesterName}) [{r.status}]
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+                {pendingReqs.length === 0
+                  ? 'No pending asset requests awaiting IT action.'
+                  : 'Selecting a request auto-fills item, employee, and department. Saving marks that request Completed.'}
+              </div>
+            </div>
+          ) : null}
+
           <div className="form-grid-2">
             <div className="form-group">
               <label>Asset / Item Name *</label>

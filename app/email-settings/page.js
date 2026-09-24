@@ -35,7 +35,7 @@ const EMPTY_SMTP = {
   username: '',
   password: '',
   password_set: false,
-  from_name: 'Integriti IT Helpdesk',
+  from_name: 'IT Service Desk',
   from_email: '',
 };
 
@@ -182,7 +182,7 @@ export default function EmailSettingsPage() {
       secure: false,
       username: s.username || 'Sajid.masood@integriti.io',
       from_email: s.from_email || s.username || 'Sajid.masood@integriti.io',
-      from_name: s.from_name || 'Integriti IT Helpdesk',
+      from_name: s.from_name || 'IT Service Desk',
     }));
   }
 
@@ -346,7 +346,7 @@ export default function EmailSettingsPage() {
                     className="form-control"
                     value={smtp.from_name}
                     onChange={(e) => setSmtp((s) => ({ ...s, from_name: e.target.value }))}
-                    placeholder="Integriti IT Helpdesk"
+                    placeholder="IT Service Desk"
                   />
                 </div>
                 <div className="form-group">

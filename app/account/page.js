@@ -1,19 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
+import { fileToAvatarUploadFile, fetchProtectedImageUrl, isProtectedUploadUrl } from '../../components/UserAvatar';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { authApi } from '../../services/api';
+import { authApi, uploadsApi } from '../../services/api';
 
 export default function AccountPage() {
   const { hasPermission, user, role, refresh } = useAuth();
   const { showToast } = useToast();
-  const [profile, setProfile] = useState({ name: '', phone: '', department: '', email: '' });
+  const fileRef = useRef(null);
+  const [profile, setProfile] = useState({ name: '', phone: '', department: '', email: '', avatar_url: '' });
   const [passwords, setPasswords] = useState({ currentPassword: '', newPassword: '', confirm: '' });
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPass, setSavingPass] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [previewSrc, setPreviewSrc] = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -22,8 +26,64 @@ export default function AccountPage() {
       phone: user.phone || '',
       department: user.department || '',
       email: user.email || '',
+      avatar_url: user.avatar_url || '',
     });
   }, [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+    const url = profile.avatar_url || user?.avatar_url;
+    if (!url) {
+      setPreviewSrc(null);
+      return undefined;
+    }
+    if (!isProtectedUploadUrl(url) && (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http'))) {
+      setPreviewSrc(url);
+      return undefined;
+    }
+    fetchProtectedImageUrl(url)
+      .then((src) => {
+        if (cancelled) {
+          if (src?.startsWith('blob:')) URL.revokeObjectURL(src);
+          return;
+        }
+        objectUrl = src;
+        setPreviewSrc(src);
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewSrc(null);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl?.startsWith('blob:')) URL.revokeObjectURL(objectUrl);
+    };
+  }, [profile.avatar_url, user?.avatar_url]);
+
+  async function onAvatarPick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      const prepared = await fileToAvatarUploadFile(file);
+      const up = await uploadsApi.upload(prepared);
+      const url = up.data?.url || null;
+      if (!url) throw new Error('Upload did not return a file URL');
+      await authApi.updateProfile({
+        name: profile.name || user?.name,
+        phone: profile.phone,
+        avatar_url: url,
+      });
+      setProfile((p) => ({ ...p, avatar_url: url }));
+      await refresh();
+      showToast('Photo Updated', 'Your profile photo was saved securely.', 'success');
+    } catch (err) {
+      showToast('Error', err.message || 'Could not upload photo', 'error');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
 
   async function saveProfile(e) {
     e.preventDefault();
@@ -33,6 +93,7 @@ export default function AccountPage() {
       await authApi.updateProfile({
         name: profile.name,
         phone: profile.phone,
+        avatar_url: profile.avatar_url || undefined,
       });
       await refresh();
       showToast('Profile Saved', 'Your profile details were updated.', 'success');
@@ -78,18 +139,38 @@ export default function AccountPage() {
       <div className="account-card-grid">
         <div className="account-sidebar-box">
           <div className="avatar-wrapper">
-            <img
-              className="avatar-preview-img"
-              alt="Profile"
-              src={
-                user?.avatar_url ||
-                "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2394a3b8'><path d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/></svg>"
-              }
+            {previewSrc ? (
+              <img className="avatar-preview-img" alt="Profile" src={previewSrc} />
+            ) : (
+              <div className="avatar-preview-img avatar-preview-fallback">
+                <span className="user-avatar-fallback" style={{ width: '100%', height: '100%', fontSize: 36, borderRadius: '50%' }}>
+                  {(user?.name || '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
+                </span>
+              </div>
+            )}
+            <button
+              type="button"
+              className="avatar-upload-btn"
+              title="Upload profile photo"
+              disabled={uploadingAvatar}
+              onClick={() => fileRef.current?.click()}
+            >
+              <i className={`fa-solid ${uploadingAvatar ? 'fa-spinner fa-spin' : 'fa-camera'}`} />
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+              hidden
+              onChange={onAvatarPick}
             />
           </div>
           <h3 style={{ fontSize: 18, marginBottom: 4, color: 'var(--text-main)' }}>{user?.name}</h3>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>{user?.department || '—'}</p>
           <span className="badge badge-open">{role?.name || 'User'}</span>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 14, lineHeight: 1.45 }}>
+            Click the camera icon to upload a circular profile photo. It appears next to your name across the portal.
+          </p>
         </div>
 
         <div className="account-main-box">

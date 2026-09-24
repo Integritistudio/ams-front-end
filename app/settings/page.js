@@ -7,20 +7,13 @@ import AccessDenied from '../../components/AccessDenied';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { settingsApi } from '../../services/api';
+import {
+  PORTAL_APPEARANCE_DEFAULTS,
+  applyPortalAppearance,
+  cachePortalAppearance,
+} from '../../lib/portalAppearance';
 
-const DEFAULTS = {
-  color_primary: '#2563eb',
-  color_accent: '#06b6d4',
-  color_text: '#f8fafc',
-};
-
-function applyCssVars(colors) {
-  if (typeof document === 'undefined') return;
-  const root = document.documentElement;
-  if (colors.color_primary) root.style.setProperty('--primary', colors.color_primary);
-  if (colors.color_accent) root.style.setProperty('--info', colors.color_accent);
-  if (colors.color_text) root.style.setProperty('--text-main', colors.color_text);
-}
+const DEFAULTS = PORTAL_APPEARANCE_DEFAULTS;
 
 export default function SettingsPage() {
   const { hasPermission } = useAuth();
@@ -77,11 +70,14 @@ export default function SettingsPage() {
     settingsApi.get()
       .then((res) => {
         const data = res.data || DEFAULTS;
-        setForm({
+        const colors = {
           color_primary: data.color_primary || DEFAULTS.color_primary,
           color_accent: data.color_accent || DEFAULTS.color_accent,
           color_text: data.color_text || DEFAULTS.color_text,
-        });
+        };
+        setForm(colors);
+        applyPortalAppearance(colors);
+        cachePortalAppearance(colors);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -98,7 +94,8 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       await settingsApi.update(form);
-      applyCssVars(form);
+      applyPortalAppearance(form);
+      cachePortalAppearance(form);
       showToast('Applied', 'Portal colors updated.', 'success');
     } catch (err) {
       showToast('Error', err.message || 'Failed to apply settings', 'error');
@@ -109,7 +106,8 @@ export default function SettingsPage() {
 
   function resetColors() {
     setForm(DEFAULTS);
-    applyCssVars(DEFAULTS);
+    applyPortalAppearance(DEFAULTS);
+    cachePortalAppearance(DEFAULTS);
   }
 
   async function generateAndSaveKey() {

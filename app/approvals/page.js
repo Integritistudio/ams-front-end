@@ -8,16 +8,56 @@ import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '..
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { requisitionsApi } from '../../services/api';
+import { requisitionsApi, uploadsApi } from '../../services/api';
+import UserAvatar from '../../components/UserAvatar';
+import { useAvatarDirectory } from '../../hooks/useAvatarDirectory';
 
 const PAGE_SIZE = 10;
+
+const IT_QUEUE_STATUSES = [
+  'Approved - Sent to IT',
+  'In Progress',
+  'In Procurement',
+  'On Hold',
+];
 
 function pid(r) {
   return r?.public_id || r?.publicId || r?.id;
 }
 
+function slaInfo(row) {
+  const status = (row?.status || '').toLowerCase();
+  if (status.includes('completed') || status.includes('fulfilled') || status.includes('reject')) {
+    return { text: 'Closed', cls: 'badge badge-sla' };
+  }
+  if (status.includes('hold')) return { text: 'Paused', cls: 'badge badge-sla-warning' };
+  const due = row?.due_timestamp || row?.dueTimestamp;
+  if (!due) return { text: 'SLA Active', cls: 'badge badge-sla' };
+  const ms = new Date(due) - Date.now();
+  if (ms < 0) return { text: 'Overdue', cls: 'badge badge-sla-overdue' };
+  const hrs = Math.ceil(ms / 3600000);
+  if (hrs <= 4) return { text: `${hrs}h left`, cls: 'badge badge-sla-warning' };
+  return { text: `${hrs}h left`, cls: 'badge badge-sla' };
+}
+
+function isPendingManager(status) {
+  return (status || '').toLowerCase().includes('pending');
+}
+
+function isItQueueStatus(status) {
+  return IT_QUEUE_STATUSES.includes(status);
+}
+
+function isExecutivePriority(r) {
+  if (!r) return false;
+  if (r.requester_is_executive === true || r.requesterIsExecutive === true) return true;
+  const hist = String(r.decision_history || r.decisionHistory || '');
+  return hist.includes('EXECUTIVE_PRIORITY');
+}
+
 export default function ApprovalsPage() {
   const { hasPermission, user, role } = useAuth();
+  const { avatarFor } = useAvatarDirectory();
   const { showToast } = useToast();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -28,12 +68,18 @@ export default function ApprovalsPage() {
   const [open, setOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [holdPrompt, setHoldPrompt] = useState(false);
+  const [holdReason, setHoldReason] = useState('');
 
-  const isDesignatedApprover = Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
-  const isExecutiveSigner = Boolean(role?.is_executive) && !Boolean(role?.is_it_admin);
+  const isItAdmin = Boolean(role?.is_it_admin);
+  const isDesignatedApprover = Boolean(role?.is_approver) && !isItAdmin;
+  const isExecutiveSigner = Boolean(role?.is_executive) && !isItAdmin;
   const canSignPending = isDesignatedApprover || isExecutiveSigner;
+  // Approver/Executive already signed off → IT-queue lives on Asset Requests for them.
+  // Staff + IT Admin keep IT-queue under Pending Approvals until Completed.
+  const seesItQueueOnPending = isItAdmin || (!isDesignatedApprover && !isExecutiveSigner);
   const canSeeAllPending =
-    Boolean(role?.is_it_admin) ||
+    isItAdmin ||
     Boolean(role?.is_approver) ||
     Boolean(role?.is_executive);
 
@@ -42,7 +88,6 @@ export default function ApprovalsPage() {
     if (r.requester_is_approver === true || r.requesterIsApprover === true) return true;
     const myEmail = (user?.email || '').toLowerCase();
     const requesterEmail = (r.requester_email || r.requesterEmail || '').toLowerCase();
-    // Approver viewing their own pending request
     if (isDesignatedApprover && myEmail && requesterEmail === myEmail) return true;
     if (isDesignatedApprover && user?.id && Number(r.requester_id ?? r.requesterId) === Number(user.id)) {
       return true;
@@ -71,8 +116,20 @@ export default function ApprovalsPage() {
     const q = search.trim().toLowerCase();
     const myEmail = (user?.email || '').toLowerCase();
     return rows.filter((r) => {
-      const status = (r.status || '').toLowerCase();
-      if (!status.includes('pending')) return false;
+      const status = r.status || '';
+      // Approver/Executive: manager-pending only (their approved items move to Asset Requests)
+      // IT Admin + Staff: manager-pending + IT action queue (still in approval until Completed)
+      if (seesItQueueOnPending) {
+        if (!isPendingManager(status) && !isItQueueStatus(status)) return false;
+      } else if (!isPendingManager(status)) {
+        return false;
+      }
+
+      // Executive Pending Approvals: only requests submitted by the Approver
+      if (isExecutiveSigner && !isApproverCreatedRequest(r)) {
+        return false;
+      }
+
       const requesterEmail = (r.requester_email || r.requesterEmail || '').toLowerCase();
       if (!canSeeAllPending) {
         if (!myEmail || requesterEmail !== myEmail) return false;
@@ -83,7 +140,7 @@ export default function ApprovalsPage() {
       const hay = [pid(r), r.item, r.requester_name || r.requesterName, r.project].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, search, canSeeAllPending, mineOnly, user?.email]);
+  }, [rows, search, canSeeAllPending, mineOnly, user?.email, seesItQueueOnPending, isExecutiveSigner]);
 
   const pageRows = pending.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -102,15 +159,23 @@ export default function ApprovalsPage() {
     ]),
   }), [pending]);
 
+  const detailStatus = detail?.status || '';
+  const detailStatusLower = detailStatus.toLowerCase();
   const needsExecutiveSign = isApproverCreatedRequest(detail);
   const canActOnDetail = Boolean(
     detail &&
     canSignPending &&
-    (detail.status || '').toLowerCase().includes('pending') &&
+    isPendingManager(detailStatus) &&
     user?.id &&
     Number(detail.approver_id ?? detail.approverId) === Number(user.id) &&
-    // Approver-created → Executive only (Approver cannot self-approve)
     (!needsExecutiveSign || isExecutiveSigner)
+  );
+  const canItActOnDetail = Boolean(
+    detail &&
+    isItAdmin &&
+    isItQueueStatus(detailStatus) &&
+    !detailStatusLower.includes('completed') &&
+    !detailStatusLower.includes('fulfilled')
   );
 
   async function openDetail(id) {
@@ -129,7 +194,7 @@ export default function ApprovalsPage() {
     if (!canSignPending) {
       showToast(
         'Not allowed',
-        'Only the assigned Approver or Executive can approve or reject. IT Admin is view-only here.',
+        'Only the assigned Approver or Executive can approve or reject. IT Admin is view-only for manager approval.',
         'warning'
       );
       return;
@@ -154,11 +219,46 @@ export default function ApprovalsPage() {
       if (action === 'reject') await requisitionsApi.reject(id);
       showToast(
         action === 'approve' ? 'Approved' : 'Rejected',
-        `Requisition ${id} has been ${action === 'approve' ? 'approved' : 'rejected'}.`,
+        action === 'approve'
+          ? `Requisition ${id} approved and sent to IT Admin for action.`
+          : `Requisition ${id} has been rejected.`,
         action === 'approve' ? 'success' : 'warning'
       );
       setOpen(false);
       await load();
+    } catch (err) {
+      showToast('Error', err.message || 'Action failed', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runItAction(action) {
+    if (!detail || !canItActOnDetail) return;
+    const id = pid(detail);
+    setBusy(true);
+    try {
+      if (action === 'inProgress') await requisitionsApi.inProgress(id);
+      if (action === 'resume') await requisitionsApi.resume(id);
+      if (action === 'complete') await requisitionsApi.complete(id);
+      if (action === 'hold') {
+        if (!holdReason.trim()) {
+          showToast('Hold Reason', 'Please enter a hold reason.', 'warning');
+          setBusy(false);
+          return;
+        }
+        await requisitionsApi.hold(id, holdReason.trim());
+        setHoldPrompt(false);
+        setHoldReason('');
+      }
+      showToast('Updated', 'Asset request status updated.', 'success');
+      if (action === 'complete') {
+        setOpen(false);
+        await load();
+      } else {
+        await openDetail(id);
+        await load();
+      }
     } catch (err) {
       showToast('Error', err.message || 'Action failed', 'error');
     } finally {
@@ -186,15 +286,21 @@ export default function ApprovalsPage() {
     );
   }
 
+  const sla = detail ? slaInfo(detail) : null;
+
   return (
     <AppShell
       title="Pending Approvals"
       subtitle={
-        canSignPending
-          ? 'Review pending requisitions and approve or reject when you are the assigned signer.'
-          : canSeeAllPending
-            ? 'View pending asset requisitions (approve/reject is Approver or Executive only).'
-            : 'View your own pending asset requisitions.'
+        isItAdmin
+          ? 'Review manager-pending requests and action approved asset requests (In Progress, On Hold, Completed).'
+          : canSignPending
+            ? isExecutiveSigner
+              ? 'Review Approver-submitted requests awaiting your sign-off. All other asset requests are viewable under Asset Requests.'
+              : 'Review pending requisitions and approve or reject when you are the assigned signer.'
+            : canSeeAllPending
+              ? 'View pending asset requisitions (approve/reject is Approver or Executive only).'
+              : 'Track your asset requests while they await manager or IT Admin approval.'
       }
     >
       <div className="metrics-grid">
@@ -269,15 +375,31 @@ export default function ApprovalsPage() {
                 <tr key={pid(r)}>
                   <td><strong>#{pid(r)}</strong></td>
                   <td>
-                    {r.requester_name || r.requesterName}
-                    <br />
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.department}</span>
+                    <UserAvatar
+                      name={r.requester_name || r.requesterName}
+                      src={avatarFor({
+                        email: r.requester_email || r.requesterEmail,
+                        name: r.requester_name || r.requesterName,
+                      })}
+                      size="table"
+                      sub={r.department}
+                    />
                   </td>
                   <td>{r.type}</td>
                   <td>{r.item}</td>
                   <td>{r.urgency}</td>
                   <td>{r.project || '—'}</td>
-                  <td><span className={statusBadgeClass(r.status)}>{r.status}</span></td>
+                  <td>
+                    <span className={statusBadgeClass(r.status)}>{r.status}</span>
+                    {isExecutivePriority(r) ? (
+                      <>
+                        {' '}
+                        <span className="badge badge-sla-warning" title="Executive Priority — auto-approved to IT">
+                          Executive Priority
+                        </span>
+                      </>
+                    ) : null}
+                  </td>
                   <td>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openDetail(pid(r))}>
                       <i className="fa-solid fa-clipboard-check" /><span>Review</span>
@@ -293,8 +415,8 @@ export default function ApprovalsPage() {
 
       <Modal
         open={open}
-        title={`Approval Review — #${detail ? pid(detail) : ''}`}
-        icon="fa-clipboard-check"
+        title={detail ? `Asset Requisition Details — #${pid(detail)}` : 'Asset Requisition Details'}
+        icon="fa-box-archive"
         onClose={() => setOpen(false)}
         maxWidth={680}
         footer={(
@@ -309,7 +431,29 @@ export default function ApprovalsPage() {
                   <i className="fa-solid fa-check" /><span>Approve (Send to IT)</span>
                 </button>
               </>
-            ) : detail && (detail.status || '').toLowerCase().includes('pending') ? (
+            ) : null}
+            {canItActOnDetail ? (
+              <>
+                {!detailStatusLower.includes('progress') && !detailStatusLower.includes('hold') ? (
+                  <button type="button" className="btn btn-info" disabled={busy} onClick={() => runItAction('inProgress')}>
+                    <i className="fa-solid fa-spinner" /><span>Mark In Progress</span>
+                  </button>
+                ) : null}
+                {!detailStatusLower.includes('hold') ? (
+                  <button type="button" className="btn btn-warning" disabled={busy} onClick={() => setHoldPrompt(true)}>
+                    <i className="fa-solid fa-pause" /><span>Put on Hold</span>
+                  </button>
+                ) : (
+                  <button type="button" className="btn btn-primary" disabled={busy} onClick={() => runItAction('resume')}>
+                    <i className="fa-solid fa-play" /><span>Resume Work</span>
+                  </button>
+                )}
+                <button type="button" className="btn btn-success" disabled={busy} onClick={() => runItAction('complete')}>
+                  <i className="fa-solid fa-circle-check" /><span>Mark Completed</span>
+                </button>
+              </>
+            ) : null}
+            {detail && isPendingManager(detailStatus) && !canActOnDetail ? (
               <span style={{ fontSize: 13, color: 'var(--text-muted)', alignSelf: 'center' }}>
                 {isApproverCreatedRequest(detail)
                   ? 'View only — Approver-created requests must be approved by an Executive'
@@ -321,28 +465,129 @@ export default function ApprovalsPage() {
       >
         {detail ? (
           <>
-            <div className="summary-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
-              <div className="summary-item"><span className="label">Requester</span><span className="val">{detail.requester_name || detail.requesterName}</span></div>
-              <div className="summary-item"><span className="label">Department</span><span className="val">{detail.department}</span></div>
-              <div className="summary-item"><span className="label">Type</span><span className="val">{detail.type}</span></div>
-              <div className="summary-item"><span className="label">Item</span><span className="val">{detail.item}</span></div>
-              <div className="summary-item"><span className="label">Urgency</span><span className="val">{detail.urgency}</span></div>
-              <div className="summary-item"><span className="label">Project</span><span className="val">{detail.project || '—'}</span></div>
+            <div className="ticket-status-banner">
+              <div>
+                <strong>Requisition:</strong>{' '}
+                <span style={{ color: 'var(--primary)', fontWeight: 700 }}>#{pid(detail)}</span>
+              </div>
+              <div>
+                <strong>Status:</strong>{' '}
+                <span className={statusBadgeClass(detail.status)}>{detail.status}</span>
+                {isExecutivePriority(detail) ? (
+                  <>
+                    {' '}
+                    <span className="badge badge-sla-warning">Executive Priority</span>
+                  </>
+                ) : null}
+              </div>
+              <div><span className={sla.cls}>{sla.text}</span></div>
             </div>
-            <div className="form-group">
+
+            {isExecutivePriority(detail) ? (
+              <div
+                className="hold-notice-box"
+                style={{
+                  background: 'rgba(245,158,11,0.12)',
+                  borderColor: 'var(--warning)',
+                }}
+              >
+                <i className="fa-solid fa-flag" style={{ marginTop: 2, color: 'var(--warning)' }} />
+                <div>
+                  <strong>Executive Priority:</strong>
+                  <div style={{ marginTop: 2 }}>
+                    Manager approval was skipped. This request was auto-approved by an Executive and sent directly to IT Admin.
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {detailStatusLower.includes('hold') ? (
+              <div className="hold-notice-box">
+                <i className="fa-solid fa-pause" style={{ marginTop: 2 }} />
+                <div>
+                  <strong>On Hold:</strong>
+                  <div style={{ marginTop: 2 }}>{detail.hold_reason || detail.holdReason || '—'}</div>
+                </div>
+              </div>
+            ) : null}
+
+            {canItActOnDetail ? (
+              <div className="admin-ticket-action-bar">
+                <div className="admin-action-info">
+                  <i className="fa-solid fa-user-shield" /><span>IT Admin Actions:</span>
+                </div>
+                <div className="admin-action-buttons">
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    Use the footer buttons to update status (In Progress / On Hold / Completed).
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="approval-summary-grid">
+              <div className="summary-item">
+                <span className="label">Requester</span>
+                <span className="val">{detail.requester_name || detail.requesterName || '—'}</span>
+              </div>
+              <div className="summary-item">
+                <span className="label">Department</span>
+                <span className="val">{detail.department || '—'}</span>
+              </div>
+              <div className="summary-item">
+                <span className="label">Approver</span>
+                <span className="val">{detail.approver_name || detail.approverName || '—'}</span>
+              </div>
+              <div className="summary-item">
+                <span className="label">Type</span>
+                <span className="val">{detail.type || '—'}</span>
+              </div>
+              <div className="summary-item" style={{ gridColumn: '1 / -1' }}>
+                <span className="label">Item</span>
+                <span className="val">{detail.item || '—'}</span>
+              </div>
+              <div className="summary-item" style={{ gridColumn: '1 / -1' }}>
+                <span className="label">Project</span>
+                <span className="val">{detail.project || '—'}</span>
+              </div>
+            </div>
+
+            <div className="form-group" style={{ marginTop: 14 }}>
               <label>Justification</label>
-              <textarea className="form-control" disabled value={detail.justification || ''} />
+              <div className="read-only-box">{detail.justification || '—'}</div>
             </div>
+
+            {detail.attachment_url || detail.attachmentUrl ? (
+              <div className="form-group">
+                <label>Attachment</label>
+                <div className="attachment-display-card">
+                  <i className="fa-solid fa-paperclip" style={{ color: 'var(--primary)' }} />
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={async () => {
+                      try {
+                        await uploadsApi.open(detail.attachment_url || detail.attachmentUrl);
+                      } catch (err) {
+                        showToast('Error', err.message || 'Could not open file', 'error');
+                      }
+                    }}
+                  >
+                    View File
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <div className="ticket-thread-section">
-              <h4 className="thread-heading"><i className="fa-solid fa-comments" /> Discussion Thread</h4>
-              <div className="timeline-thread-box">
+              <h4 className="thread-heading"><i className="fa-solid fa-comments" /> Queries &amp; Discussion</h4>
+              <div className="timeline-thread-box" style={{ maxHeight: 160 }}>
                 {(detail.replies || []).length === 0 ? (
                   <div className="empty-state" style={{ padding: 16 }}>No replies yet.</div>
                 ) : (
                   (detail.replies || []).map((r) => (
                     <div key={r.id || r.created_at} className="thread-msg">
                       <div className="thread-msg-header">
-                        <strong>{r.author_name || r.authorName || 'User'}</strong>
+                        <strong>{r.author_name || r.authorName || r.author || 'User'}</strong>
                         <span>{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
                       </div>
                       <div className="thread-msg-body">{r.text || r.message}</div>
@@ -351,14 +596,47 @@ export default function ApprovalsPage() {
                 )}
               </div>
               <div className="reply-input-wrapper">
-                <textarea className="form-control" rows={2} placeholder="Ask a question or leave a note..." value={replyText} onChange={(e) => setReplyText(e.target.value)} />
+                <textarea
+                  className="form-control"
+                  rows={2}
+                  placeholder="Write message..."
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                />
                 <button type="button" className="btn btn-primary btn-sm" onClick={postReply}>
-                  <i className="fa-solid fa-reply" /><span>Post Reply</span>
+                  <i className="fa-solid fa-reply" /><span>Post Message</span>
                 </button>
               </div>
             </div>
           </>
         ) : null}
+      </Modal>
+
+      <Modal
+        open={holdPrompt}
+        title="Put Asset Request On Hold"
+        icon="fa-pause"
+        onClose={() => setHoldPrompt(false)}
+        maxWidth={420}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setHoldPrompt(false)}>Cancel</button>
+            <button type="button" className="btn btn-warning" disabled={busy} onClick={() => runItAction('hold')}>
+              Confirm Hold
+            </button>
+          </>
+        )}
+      >
+        <div className="form-group">
+          <label>Mandatory Reason for Hold *</label>
+          <textarea
+            className="form-control"
+            rows={3}
+            value={holdReason}
+            onChange={(e) => setHoldReason(e.target.value)}
+            placeholder="Waiting on vendor / budget / requester confirmation..."
+          />
+        </div>
       </Modal>
     </AppShell>
   );

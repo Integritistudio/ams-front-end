@@ -2,10 +2,13 @@
 
 export function statusBadgeClass(status) {
   const s = (status || '').toLowerCase();
-  if (s.includes('resolved') || s.includes('fulfilled') || s.includes('approved')) return 'badge badge-resolved';
-  if (s.includes('reject')) return 'badge badge-rejected';
+  if (s.includes('sent to it') || s.includes('in progress') || s.includes('procurement')) return 'badge badge-progress';
+  if (s.includes('resolved') || s.includes('fulfilled') || s.includes('completed')) return 'badge badge-resolved';
+  if (s.includes('approved') && !s.includes('pending')) return 'badge badge-resolved';
+  if (s.includes('reject') || s === 'deleted') return 'badge badge-rejected';
+  if (s.includes('suspend')) return 'badge badge-hold';
   if (s.includes('hold')) return 'badge badge-hold';
-  if (s.includes('progress') || s.includes('pending') || s.includes('procurement')) return 'badge badge-progress';
+  if (s.includes('progress') || s.includes('pending')) return 'badge badge-progress';
   return 'badge badge-open';
 }
 
@@ -92,7 +95,7 @@ export function openPrintableTable({ title, headers, rows }) {
 </head>
 <body>
   <h1>${escapeHtml(title || 'Report')}</h1>
-  <div class="meta">Integriti IT Helpdesk · Generated ${escapeHtml(generated)} · ${rows?.length || 0} record(s)</div>
+  <div class="meta">IT Service Desk · Generated ${escapeHtml(generated)} · ${rows?.length || 0} record(s)</div>
   <table>
     <thead><tr>${headCells}</tr></thead>
     <tbody>${bodyRows || `<tr><td colspan="${Math.max(headers.length, 1)}">No records</td></tr>`}</tbody>

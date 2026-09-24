@@ -2,10 +2,11 @@ import './globals.css';
 import { AuthProvider } from '../context/AuthContext';
 import { ToastProvider } from '../context/ToastContext';
 import { ApiLoadingProvider } from '../context/ApiLoadingContext';
+import PortalAppearanceBootstrap from '../components/PortalAppearanceBootstrap';
 
 export const metadata = {
-  title: 'Integriti IT Helpdesk',
-  description: 'Centralized IT Helpdesk & Asset Procurement Portal',
+  title: 'IT Service Desk',
+  description: 'Centralized IT Service Desk & Asset Procurement Portal',
 };
 
 export default function RootLayout({ children }) {
@@ -14,7 +15,10 @@ export default function RootLayout({ children }) {
       <body>
         <AuthProvider>
           <ToastProvider>
-            <ApiLoadingProvider>{children}</ApiLoadingProvider>
+            <ApiLoadingProvider>
+              <PortalAppearanceBootstrap />
+              {children}
+            </ApiLoadingProvider>
           </ToastProvider>
         </AuthProvider>
       </body>
