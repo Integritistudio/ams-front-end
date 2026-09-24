@@ -12,6 +12,32 @@ export function statusBadgeClass(status) {
   return 'badge badge-open';
 }
 
+/** Stable capsule color per role name (same role → same color). */
+export function roleBadgeClass(roleName) {
+  const name = String(roleName || '').trim();
+  if (!name || name === '—') return 'badge badge-role badge-role-muted';
+
+  const key = name.toLowerCase();
+  if (key.includes('it admin') || key === 'admin' || key.includes('itadmin')) {
+    return 'badge badge-role badge-role-it-admin';
+  }
+  if (key.includes('approver')) return 'badge badge-role badge-role-approver';
+  if (key.includes('executive') || key.includes('exec')) {
+    return 'badge badge-role badge-role-executive';
+  }
+  if (key === 'staff' || key.includes('employee') || key.includes('member')) {
+    return 'badge badge-role badge-role-staff';
+  }
+
+  // Hash unknown role names so each distinct name keeps a fixed palette slot
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  const slot = hash % 8;
+  return `badge badge-role badge-role-${slot}`;
+}
+
 export function Pagination({ page, pageSize, total, onChange }) {
   const pages = Math.max(1, Math.ceil(total / pageSize));
   if (total === 0) return null;

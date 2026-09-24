@@ -157,10 +157,21 @@ export const assetsApi = {
 };
 export const kbApi = { list: (category) => api(`/api/kb${category && category !== 'All' ? `?category=${encodeURIComponent(category)}` : ''}`), get: (id) => api(`/api/kb/${id}`) };
 export const emailTemplatesApi = {
+  catalog: () => api('/api/email-templates/catalog'),
   list: () => api('/api/email-templates'),
+  get: (id) => api(`/api/email-templates/${id}`),
   create: (body) => api('/api/email-templates', { method: 'POST', body }),
   update: (id, body) => api(`/api/email-templates/${id}`, { method: 'PUT', body }),
+  resetDefaults: (id) => api(`/api/email-templates/${id}/reset-defaults`, { method: 'POST' }),
   remove: (id) => api(`/api/email-templates/${id}`, { method: 'DELETE' }),
+  triggers: () => api('/api/email-templates/triggers'),
+  updateTriggers: (triggers) => api('/api/email-templates/triggers', { method: 'PUT', body: { triggers } }),
+  preview: (body) => api('/api/email-templates/preview', { method: 'POST', body }),
+  previewCard: (eventKey, mode = 'outgoing', body = {}) =>
+    api(`/api/email-templates/preview-card/${encodeURIComponent(eventKey)}?mode=${encodeURIComponent(mode)}`, {
+      method: 'POST',
+      body: { ...body, mode, full: true },
+    }),
 };
 export const notificationsApi = {
   list: () => api('/api/notifications', { silent: true }),

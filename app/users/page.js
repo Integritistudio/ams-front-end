@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
+import { statusBadgeClass, roleBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -61,6 +61,7 @@ export default function UsersPage() {
   const [departments, setDepartments] = useState([]);
   const [designations, setDesignations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [listTab, setListTab] = useState('current'); // current = Active+Suspended, deleted = soft-deleted
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('All');
   const [deptFilter, setDeptFilter] = useState('All');
@@ -118,19 +119,39 @@ export default function UsersPage() {
     loadDepartments();
   }, [hasPermission, load, loadDepartments]);
 
+  const tabCounts = useMemo(() => {
+    let current = 0;
+    let deleted = 0;
+    rows.forEach((u) => {
+      if ((u.status || '') === 'Deleted') deleted += 1;
+      else current += 1;
+    });
+    return { current, deleted };
+  }, [rows]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((u) => {
+      const isDeleted = (u.status || '') === 'Deleted';
+      if (listTab === 'deleted' ? !isDeleted : isDeleted) return false;
       if (roleFilter !== 'All') {
         const roleNameVal = u.role_name || u.roleName || roles.find((r) => Number(r.id) === Number(u.role_id))?.name;
         if (roleNameVal !== roleFilter && String(u.role_id) !== String(roleFilter)) return false;
       }
       if (deptFilter !== 'All' && (u.department || '') !== deptFilter) return false;
-      if (statusFilter !== 'All' && (u.status || '') !== statusFilter) return false;
+      // Status filter only on Active Users tab (Active / Suspended)
+      if (listTab === 'current' && statusFilter !== 'All' && (u.status || '') !== statusFilter) return false;
       if (!q) return true;
       return [u.name, u.email, u.department, u.designation].join(' ').toLowerCase().includes(q);
     });
-  }, [rows, search, roleFilter, deptFilter, statusFilter, roles]);
+  }, [rows, listTab, search, roleFilter, deptFilter, statusFilter, roles]);
+
+  function switchListTab(next) {
+    if (next === listTab) return;
+    setListTab(next);
+    setStatusFilter('All');
+    setPage(1);
+  }
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -503,6 +524,23 @@ export default function UsersPage() {
         <div className="toolbar-left"><h2>User Directory & Directory Management</h2></div>
       </div>
 
+      <div className="kb-categories-bar" style={{ margin: '20px 0 14px', padding: '4px 4px 0' }}>
+        <button
+          type="button"
+          className={`kb-pill${listTab === 'current' ? ' active' : ''}`}
+          onClick={() => switchListTab('current')}
+        >
+          Active & Inactive ({tabCounts.current})
+        </button>
+        <button
+          type="button"
+          className={`kb-pill${listTab === 'deleted' ? ' active' : ''}`}
+          onClick={() => switchListTab('deleted')}
+        >
+          Deleted Users ({tabCounts.deleted})
+        </button>
+      </div>
+
       <div className="table-toolbar" style={{ borderRadius: 0, borderTop: 'none', background: 'rgba(15,23,42,0.15)' }}>
         <div className="toolbar-controls-group" style={{ width: '100%', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <div className="search-box" style={{ flex: 1, minWidth: 200 }}>
@@ -524,18 +562,19 @@ export default function UsersPage() {
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
-          <select className="form-control form-control-select" style={{ width: 140 }} value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
-            <option value="All">All Status</option>
-            <option value="Active">Active</option>
-            <option value="Suspended">Suspended</option>
-            <option value="Deleted">Deleted</option>
-          </select>
+          {listTab === 'current' ? (
+            <select className="form-control form-control-select" style={{ width: 140 }} value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}>
+              <option value="All">All Status</option>
+              <option value="Active">Active</option>
+              <option value="Suspended">Suspended</option>
+            </select>
+          ) : null}
           <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
             <i className="fa-solid fa-filter-circle-xmark" /> Clear
           </button>
           <TableExportButtons
-            filename="users"
-            title="User Directory"
+            filename={listTab === 'deleted' ? 'deleted-users' : 'users'}
+            title={listTab === 'deleted' ? 'Deleted Users' : 'User Directory'}
             headers={exportPack.headers}
             rows={exportPack.rows}
           />
@@ -560,14 +599,20 @@ export default function UsersPage() {
             {loading ? (
               <DataLoader colSpan={8} label="Loading users..." />
             ) : pageRows.length === 0 ? (
-              <tr><td colSpan={8}><EmptyState text="No users found." /></td></tr>
+              <tr>
+                <td colSpan={8}>
+                  <EmptyState
+                    text={listTab === 'deleted' ? 'No deleted users.' : 'No active or suspended users found.'}
+                  />
+                </td>
+              </tr>
             ) : (
               pageRows.map((u) => (
                 <tr key={u.id}>
                   <td><strong>#{u.id}</strong></td>
                   <td><UserAvatar name={u.name} src={u.avatar_url} size="table" /></td>
                   <td>{u.email}</td>
-                  <td>{roleName(u)}</td>
+                  <td><span className={roleBadgeClass(roleName(u))}>{roleName(u)}</span></td>
                   <td>{u.department || '—'}</td>
                   <td>{u.designation || '—'}</td>
                   <td><span className={statusBadgeClass(u.status)}>{u.status}</span></td>
