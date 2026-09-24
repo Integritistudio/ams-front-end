@@ -52,10 +52,12 @@ function RequisitionsPageInner() {
     Boolean(role?.is_approver) ||
     Boolean(role?.is_executive);
   const isItAdmin = Boolean(role?.is_it_admin);
-  // Approver/Executive may see IT-queue items on Asset Requests (already signed off).
-  // IT Admin + Staff keep those under Pending Approvals until Completed.
+  const isExecutiveViewer = Boolean(role?.is_executive);
+  // Approver may see IT-queue items on Asset Requests (already signed off).
+  // Executive sees the full company catalogue here (all statuses).
+  // IT Admin + Staff keep IT-queue under Pending Approvals until Completed.
   const hideItQueueOnAssetRequests =
-    isItAdmin || (!Boolean(role?.is_approver) && !Boolean(role?.is_executive));
+    isItAdmin || (!Boolean(role?.is_approver) && !isExecutiveViewer);
   const IT_QUEUE_STATUSES = [
     'Approved - Sent to IT',
     'In Progress',
@@ -65,7 +67,7 @@ function RequisitionsPageInner() {
   const isItOverride = canViewAll('requisitions') || Boolean(role?.is_it_admin);
   const isApproverCreator = Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
   const isExecutiveCreator =
-    Boolean(role?.is_executive) && !Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
+    isExecutiveViewer && !Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
   const signerLabel = isApproverCreator ? 'Executive' : 'Approver';
 
   function isExecutivePriority(r) {
@@ -231,11 +233,12 @@ function RequisitionsPageInner() {
       const status = r.status || '';
       const isPending =
         status === 'Pending Manager Approval' || status.toLowerCase().includes('pending');
-      // Manager-pending lives only under Pending Approvals
-      if (isPending) return false;
+      // Manager-pending normally lives under Pending Approvals.
+      // Executives get a full org view on Asset Requests (all users / all statuses).
+      if (isPending && !isExecutiveViewer) return false;
 
       // Still awaiting IT Admin action → Pending Approvals for IT Admin & Staff
-      // Approver/Executive already signed off, so they may see these here
+      // Approver already signed off, so they may see these here; Executive sees all
       if (hideItQueueOnAssetRequests && IT_QUEUE_STATUSES.includes(status)) {
         return false;
       }
@@ -254,7 +257,7 @@ function RequisitionsPageInner() {
       ].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, search, statusFilter, mineOnly, user?.email, hideItQueueOnAssetRequests]);
+  }, [rows, search, statusFilter, mineOnly, user?.email, hideItQueueOnAssetRequests, isExecutiveViewer]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -335,7 +338,7 @@ function RequisitionsPageInner() {
       setCreateOpen(false);
       setForm(emptyForm);
       setAttachFile(null);
-      await load();
+      router.push('/approvals');
     } catch (err) {
       showToast('Error', err.message || 'Could not submit request', 'error');
     } finally {
@@ -377,7 +380,11 @@ function RequisitionsPageInner() {
   return (
     <AppShell
       title="Asset Requests"
-      subtitle="Completed and rejected asset requisitions. Requests still awaiting manager or IT Admin approval stay under Pending Approvals."
+      subtitle={
+        isExecutiveViewer
+          ? 'Organisation-wide view of all asset requests and statuses. Your sign-off queue (Approver-created only) stays under Pending Approvals.'
+          : 'Completed and rejected asset requisitions. Requests still awaiting manager or IT Admin approval stay under Pending Approvals.'
+      }
       actions={(
         <button
           type="button"
@@ -446,6 +453,9 @@ function RequisitionsPageInner() {
               onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
             >
               <option value="All">All Statuses</option>
+              {isExecutiveViewer ? (
+                <option value="Pending Manager Approval">Pending Manager Approval</option>
+              ) : null}
               {!hideItQueueOnAssetRequests ? (
                 <>
                   <option value="Approved - Sent to IT">Approved - Sent to IT</option>
@@ -486,7 +496,17 @@ function RequisitionsPageInner() {
             {loading ? (
               <DataLoader colSpan={8} label="Loading requisitions..." />
             ) : pageRows.length === 0 ? (
-              <tr><td colSpan={8}><EmptyState text="No approved asset requests yet. Pending items are under Pending Approvals." /></td></tr>
+              <tr>
+                <td colSpan={8}>
+                  <EmptyState
+                    text={
+                      isExecutiveViewer
+                        ? 'No asset requests found.'
+                        : 'No approved asset requests yet. Pending items are under Pending Approvals.'
+                    }
+                  />
+                </td>
+              </tr>
             ) : (
               pageRows.map((r) => (
                 <tr key={pid(r)}>

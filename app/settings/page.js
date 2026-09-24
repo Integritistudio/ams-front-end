@@ -73,7 +73,6 @@ export default function SettingsPage() {
         const colors = {
           color_primary: data.color_primary || DEFAULTS.color_primary,
           color_accent: data.color_accent || DEFAULTS.color_accent,
-          color_text: data.color_text || DEFAULTS.color_text,
         };
         setForm(colors);
         applyPortalAppearance(colors);
@@ -242,30 +241,16 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="form-group">
-                <label>Text Color</label>
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center', maxWidth: 320 }}>
-                  <input
-                    type="color"
-                    value={form.color_text}
-                    onChange={(e) => syncColor('color_text', e.target.value)}
-                    style={{ width: 48, height: 38, borderRadius: 6, border: '1px solid var(--border-color)', background: 'transparent', cursor: 'pointer' }}
-                  />
-                  <input
-                    type="text"
-                    className="form-control"
-                    value={form.color_text}
-                    onChange={(e) => syncColor('color_text', e.target.value)}
-                  />
-                </div>
-              </div>
+              <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '4px 0 0', lineHeight: 1.45 }}>
+                Text color follows Light / Dark mode automatically and is not customizable.
+              </p>
 
               <div style={{ margin: '20px 0' }}>
                 <label style={{ marginBottom: 8, display: 'block' }}>Live Preview</label>
                 <div style={{ display: 'flex', gap: 14 }}>
                   <div style={{ flex: 1, height: 50, borderRadius: 8, background: form.color_primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: '#fff', fontSize: 13 }}>PRIMARY</div>
                   <div style={{ flex: 1, height: 50, borderRadius: 8, background: form.color_accent, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: '#fff', fontSize: 13 }}>ACCENT</div>
-                  <div style={{ flex: 1, height: 50, borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, color: form.color_text }}>TEXT COLOR</div>
+                  <div style={{ flex: 1, height: 50, borderRadius: 8, background: 'var(--bg-input)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, color: 'var(--text-main)' }}>THEME TEXT</div>
                 </div>
               </div>
 

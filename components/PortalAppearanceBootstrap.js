@@ -9,13 +9,15 @@ import {
 } from '../lib/portalAppearance';
 
 /**
- * Loads saved portal colors from the API (and local cache) so appearance
- * survives a full page refresh — Settings only applied vars in-session before.
+ * Loads saved portal brand colors (primary / accent) so appearance survives refresh.
+ * Text color is never taken from Settings — only light/dark theme CSS.
  */
 export default function PortalAppearanceBootstrap() {
   useEffect(() => {
     const cached = readCachedPortalAppearance();
     if (cached) applyPortalAppearance(cached);
+    // Always clear legacy --text-main even if cache is empty
+    else document.documentElement.style.removeProperty('--text-main');
 
     let cancelled = false;
     settingsApi
@@ -26,7 +28,6 @@ export default function PortalAppearanceBootstrap() {
         const colors = {
           color_primary: data.color_primary,
           color_accent: data.color_accent,
-          color_text: data.color_text,
         };
         applyPortalAppearance(colors);
         cachePortalAppearance(colors);

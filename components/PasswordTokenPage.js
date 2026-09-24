@@ -1,10 +1,9 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { authApi } from '../services/api';
 import { useToast } from '../context/ToastContext';
-
 import DataLoader from './DataLoader';
 
 function PasswordForm({ mode }) {
@@ -14,8 +13,15 @@ function PasswordForm({ mode }) {
   const { showToast } = useToast();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const theme = localStorage.getItem('integriti_theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -54,14 +60,60 @@ function PasswordForm({ mode }) {
           <p>Choose a secure password for your IT Service Desk account</p>
         </div>
         {error ? <div className="alert-box alert-error" style={{ display: 'block' }}>{error}</div> : null}
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} autoComplete="off">
           <div className="form-group">
-            <label>New Password</label>
-            <input type="password" className="form-control" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <label htmlFor="newPassword">New Password</label>
+            <div className="input-wrapper">
+              <i className="fa-solid fa-lock input-icon" />
+              <input
+                type={showPass ? 'text' : 'password'}
+                id="newPassword"
+                placeholder="••••••••"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <i
+                className={`fa-regular ${showPass ? 'fa-eye-slash' : 'fa-eye'} toggle-password`}
+                onClick={() => setShowPass((v) => !v)}
+                role="button"
+                tabIndex={0}
+                aria-label={showPass ? 'Hide password' : 'Show password'}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setShowPass((v) => !v);
+                  }
+                }}
+              />
+            </div>
           </div>
           <div className="form-group">
-            <label>Confirm Password</label>
-            <input type="password" className="form-control" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
+            <label htmlFor="confirmPassword">Confirm Password</label>
+            <div className="input-wrapper">
+              <i className="fa-solid fa-lock input-icon" />
+              <input
+                type={showConfirm ? 'text' : 'password'}
+                id="confirmPassword"
+                placeholder="••••••••"
+                required
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+              />
+              <i
+                className={`fa-regular ${showConfirm ? 'fa-eye-slash' : 'fa-eye'} toggle-password`}
+                onClick={() => setShowConfirm((v) => !v)}
+                role="button"
+                tabIndex={0}
+                aria-label={showConfirm ? 'Hide password' : 'Show password'}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setShowConfirm((v) => !v);
+                  }
+                }}
+              />
+            </div>
           </div>
           <button type="submit" className="btn btn-primary btn-submit" disabled={submitting}>
             {submitting ? (
