@@ -188,8 +188,6 @@ export const settingsApi = {
   updateSmtp: (body) => api('/api/settings/smtp', { method: 'PUT', body }),
   testSmtp: (to) => api('/api/settings/smtp/test', { method: 'POST', body: { to } }),
   getFileEncryption: () => api('/api/settings/file-encryption'),
-  updateFileEncryption: (body) => api('/api/settings/file-encryption', { method: 'PUT', body }),
-  clearFileEncryption: () => api('/api/settings/file-encryption', { method: 'DELETE' }),
   getOpenAI: () => api('/api/settings/openai'),
   updateOpenAI: (body) => api('/api/settings/openai', { method: 'PUT', body }),
 };

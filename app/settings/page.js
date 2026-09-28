@@ -22,12 +22,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const [encStatus, setEncStatus] = useState({ key_set: false, key_preview: null, source: 'fallback' });
+  const [encStatus, setEncStatus] = useState({ key_set: false, key_preview: null, source: 'none', message: '' });
   const [encLoading, setEncLoading] = useState(true);
-  const [encSaving, setEncSaving] = useState(false);
-  const [manualKey, setManualKey] = useState('');
-  const [generatedKey, setGeneratedKey] = useState('');
-  const [showKey, setShowKey] = useState(false);
 
   const [aiStatus, setAiStatus] = useState({ key_set: false, model: 'gemini-3.6-flash', source: 'none', provider: 'gemini' });
   const [aiLoading, setAiLoading] = useState(true);
@@ -107,82 +103,6 @@ export default function SettingsPage() {
     setForm(DEFAULTS);
     applyPortalAppearance(DEFAULTS);
     cachePortalAppearance(DEFAULTS);
-  }
-
-  async function generateAndSaveKey() {
-    if (encStatus.key_set) {
-      const ok = window.confirm(
-        'Generating a new key will make previously uploaded attachments unreadable. Continue?'
-      );
-      if (!ok) return;
-    }
-    setEncSaving(true);
-    setGeneratedKey('');
-    try {
-      const res = await settingsApi.updateFileEncryption({ generate: true });
-      setEncStatus(res.data || {});
-      if (res.data?.generated_key) {
-        setGeneratedKey(res.data.generated_key);
-        setShowKey(true);
-      }
-      showToast('Key Saved', res.message || 'Encryption key generated and saved.', 'success');
-    } catch (err) {
-      showToast('Error', err.message || 'Could not generate key', 'error');
-    } finally {
-      setEncSaving(false);
-    }
-  }
-
-  async function saveManualKey(e) {
-    e.preventDefault();
-    if (!manualKey.trim() || manualKey.trim().length < 16) {
-      showToast('Invalid', 'Key must be at least 16 characters.', 'warning');
-      return;
-    }
-    if (encStatus.key_set) {
-      const ok = window.confirm(
-        'Changing the key will make previously uploaded attachments unreadable. Continue?'
-      );
-      if (!ok) return;
-    }
-    setEncSaving(true);
-    try {
-      const res = await settingsApi.updateFileEncryption({ encryption_key: manualKey.trim() });
-      setEncStatus(res.data || {});
-      setManualKey('');
-      setGeneratedKey('');
-      showToast('Saved', res.message || 'Encryption key saved.', 'success');
-    } catch (err) {
-      showToast('Error', err.message || 'Could not save key', 'error');
-    } finally {
-      setEncSaving(false);
-    }
-  }
-
-  async function clearKey() {
-    const ok = window.confirm('Clear the database encryption key? New uploads will use env/fallback until you set a key again.');
-    if (!ok) return;
-    setEncSaving(true);
-    try {
-      const res = await settingsApi.clearFileEncryption();
-      setEncStatus(res.data || {});
-      setGeneratedKey('');
-      showToast('Cleared', res.message || 'Key cleared.', 'success');
-    } catch (err) {
-      showToast('Error', err.message || 'Could not clear key', 'error');
-    } finally {
-      setEncSaving(false);
-    }
-  }
-
-  async function copyGenerated() {
-    if (!generatedKey) return;
-    try {
-      await navigator.clipboard.writeText(generatedKey);
-      showToast('Copied', 'Encryption key copied to clipboard.', 'success');
-    } catch (_e) {
-      showToast('Copy failed', 'Select and copy the key manually.', 'warning');
-    }
   }
 
   if (!hasPermission('settings')) {
@@ -400,107 +320,58 @@ export default function SettingsPage() {
 
         <div className="account-main-box" style={{ marginTop: 20 }}>
           <div className="account-section-heading">
-            <i className="fa-solid fa-key" /><span>Ticket Attachment Encryption Key</span>
+            <i className="fa-solid fa-key" /><span>Attachment Encryption</span>
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.5 }}>
-            Uploaded ticket files are encrypted (AES-256-GCM) in the database. Set the key here as an admin — no need to put it in <code>.env</code>.
-            Changing or regenerating the key will prevent decrypting older attachments.
+            Ticket, requisition, and avatar files are encrypted (AES-256-GCM) in the database using
+            {' '}<code>FILE_ENCRYPTION_KEY</code> from the server environment. The key is not stored in the UI.
+            If the key is missing, uploads with attachments are blocked so documents are never saved under a weak fallback.
+            Keep the same key — changing it makes older attachments unreadable.
           </p>
 
           {encLoading ? (
-            <DataLoader label="Loading encryption settings..." />
+            <DataLoader label="Loading encryption status..." />
           ) : (
             <>
-              <div className="form-grid-2" style={{ marginBottom: 16 }}>
+              <div className="form-grid-2" style={{ marginBottom: 12 }}>
                 <div className="form-group">
                   <label>Status</label>
                   <input
                     className="form-control"
                     readOnly
-                    value={encStatus.key_set ? `Configured (${encStatus.key_preview || '••••'})` : 'Not set in database'}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Active Source</label>
-                  <input
-                    className="form-control"
-                    readOnly
                     value={
-                      encStatus.source === 'database'
-                        ? 'Database (admin UI)'
-                        : encStatus.source === 'env'
-                          ? 'Environment (.env fallback)'
-                          : 'Built-in fallback (set a key)'
+                      encStatus.key_set
+                        ? `Configured (${encStatus.key_preview || '••••'})`
+                        : 'Not configured — set FILE_ENCRYPTION_KEY'
                     }
                   />
                 </div>
-              </div>
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={encSaving}
-                  onClick={generateAndSaveKey}
-                >
-                  <i className="fa-solid fa-wand-magic-sparkles" />
-                  <span>{encSaving ? 'Saving...' : 'Generate & Save New Key'}</span>
-                </button>
-                {encStatus.key_set ? (
-                  <button type="button" className="btn btn-secondary" disabled={encSaving} onClick={clearKey}>
-                    <i className="fa-solid fa-trash" /><span>Clear DB Key</span>
-                  </button>
-                ) : null}
-              </div>
-
-              {generatedKey ? (
-                <div
-                  className="form-group"
-                  style={{
-                    background: 'rgba(37,99,235,0.06)',
-                    border: '1px solid rgba(37,99,235,0.2)',
-                    padding: 12,
-                    borderRadius: 8,
-                    marginBottom: 16,
-                  }}
-                >
-                  <label style={{ fontWeight: 700, color: 'var(--primary)' }}>
-                    New key (copy & store securely — shown once)
-                  </label>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <input
-                      className="form-control"
-                      readOnly
-                      type={showKey ? 'text' : 'password'}
-                      value={generatedKey}
-                    />
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowKey((v) => !v)}>
-                      <i className={`fa-solid ${showKey ? 'fa-eye-slash' : 'fa-eye'}`} />
-                    </button>
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={copyGenerated}>
-                      <i className="fa-solid fa-copy" />
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              <form onSubmit={saveManualKey} autoComplete="off">
                 <div className="form-group">
-                  <label>Or paste your own key (min. 16 characters)</label>
+                  <label>Source</label>
                   <input
                     className="form-control"
-                    type="password"
-                    value={manualKey}
-                    onChange={(e) => setManualKey(e.target.value)}
-                    placeholder="Paste existing key or create your own secret string"
+                    readOnly
+                    value={encStatus.key_set ? 'Environment (.env / hosting)' : 'None'}
                   />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button type="submit" className="btn btn-primary" disabled={encSaving || !manualKey.trim()}>
-                    <i className="fa-solid fa-floppy-disk" /><span>{encSaving ? 'Saving...' : 'Save Key'}</span>
-                  </button>
-                </div>
-              </form>
+              </div>
+              <p
+                style={{
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                  margin: 0,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: `1px solid ${encStatus.key_set ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.35)'}`,
+                  background: encStatus.key_set ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                  color: 'var(--text-main)',
+                }}
+              >
+                {encStatus.message
+                  || (encStatus.key_set
+                    ? 'Encryption is ready. Attachments can be uploaded.'
+                    : 'Set FILE_ENCRYPTION_KEY in backend .env (min. 16 characters), restart the API, then refresh this page.')}
+              </p>
             </>
           )}
         </div>
