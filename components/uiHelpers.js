@@ -1,5 +1,7 @@
 'use client';
 
+import { useAuth } from '../context/AuthContext';
+
 export function statusBadgeClass(status) {
   const s = (status || '').toLowerCase();
   if (s.includes('sent to it') || s.includes('in progress') || s.includes('procurement')) return 'badge badge-progress';
@@ -161,7 +163,7 @@ export function openPrintableTable({ title, headers, rows }) {
 
 /**
  * CSV + PDF (print-to-PDF) + Print — matches index.html admin export group.
- * Exports the provided rows (typically full filtered set, not one page).
+ * Hidden unless the user's role has can_export (Super Admin always allowed).
  */
 export function TableExportButtons({
   filename = 'export',
@@ -170,6 +172,9 @@ export function TableExportButtons({
   rows = [],
   disabled = false,
 }) {
+  const { canExport } = useAuth();
+  if (!canExport) return null;
+
   const empty = !Array.isArray(rows) || rows.length === 0;
   const blocked = disabled || empty || !headers.length;
 

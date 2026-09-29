@@ -6,9 +6,11 @@ import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
 import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { vendorsApi } from '../../services/api';
+import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
 
 const PAGE_SIZE = 10;
 
@@ -30,6 +32,7 @@ export default function VendorsPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [dateRange, setDateRange] = useState(emptyDateRange);
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -55,11 +58,12 @@ export default function VendorsPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((v) =>
-      [pid(v), v.name, v.category, v.contact, v.status].join(' ').toLowerCase().includes(q)
-    );
-  }, [rows, search]);
+    return rows.filter((v) => {
+      if (!rowInDateRange(v, dateRange)) return false;
+      if (!q) return true;
+      return [pid(v), v.name, v.category, v.contact, v.status].join(' ').toLowerCase().includes(q);
+    });
+  }, [rows, search, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -150,6 +154,10 @@ export default function VendorsPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
+          <DateRangeFilter
+            value={dateRange}
+            onChange={(next) => { setDateRange(next); setPage(1); }}
+          />
           <TableExportButtons
             filename="approved-vendors"
             title="Approved Vendors"

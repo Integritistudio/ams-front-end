@@ -4,14 +4,21 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { authApi, setToken } from '../services/api';
 import { clearLoginNoticeFlag } from '../lib/loginNotice';
 import { startShift, pauseShift } from '../lib/shiftHours';
+import { touchSessionActivity } from '../lib/sessionActivity';
 
 const AuthContext = createContext(null);
+
+function readStoredToken() {
+  if (typeof window === 'undefined') return null;
+  return sessionStorage.getItem('helpdesk_token') || localStorage.getItem('helpdesk_token');
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
   const [permissions, setPermissions] = useState([]);
   const [permissionMeta, setPermissionMeta] = useState([]);
+  const [canExport, setCanExport] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const applyAuth = useCallback((data) => {
@@ -19,12 +26,14 @@ export function AuthProvider({ children }) {
     setRole(data?.role || null);
     setPermissions(data?.permissions || []);
     setPermissionMeta(data?.permissionMeta || []);
+    setCanExport(Boolean(data?.can_export || data?.user?.is_super_admin || data?.role?.can_export));
   }, []);
 
   const refresh = useCallback(async () => {
     try {
       const res = await authApi.me();
       applyAuth(res.data);
+      touchSessionActivity();
       if (res.data?.user?.email) startShift(res.data.user.email);
       return res.data;
     } catch (_e) {
@@ -45,7 +54,7 @@ export function AuthProvider({ children }) {
   }, [applyAuth]);
 
   useEffect(() => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('helpdesk_token') : null;
+    const token = readStoredToken();
     if (!token) {
       setLoading(false);
       return;
@@ -53,11 +62,12 @@ export function AuthProvider({ children }) {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
-  const login = useCallback(async (email, password) => {
-    const res = await authApi.login(email, password);
-    setToken(res.data.token);
+  const login = useCallback(async (email, password, remember = false) => {
+    const res = await authApi.login(email, password, remember);
+    setToken(res.data.token, { persist: Boolean(remember) });
     clearLoginNoticeFlag();
     applyAuth(res.data);
+    touchSessionActivity();
     const userEmail = res.data?.user?.email || email;
     if (typeof window !== 'undefined') {
       localStorage.setItem('integriti_last_user_email', JSON.stringify(userEmail));
@@ -104,6 +114,7 @@ export function AuthProvider({ children }) {
       role,
       permissions,
       permissionMeta,
+      canExport,
       loading,
       login,
       logout,
@@ -112,7 +123,7 @@ export function AuthProvider({ children }) {
       canViewAll,
       isAuthenticated: Boolean(user),
     }),
-    [user, role, permissions, permissionMeta, loading, login, logout, refresh, hasPermission, canViewAll]
+    [user, role, permissions, permissionMeta, canExport, loading, login, logout, refresh, hasPermission, canViewAll]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

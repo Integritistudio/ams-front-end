@@ -6,9 +6,11 @@ import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
 import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { procurementApi, vendorsApi, usersApi, requisitionsApi } from '../../services/api';
+import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
 
 const PAGE_SIZE = 10;
 
@@ -41,11 +43,11 @@ const emptyForm = {
   assigned_user_email: '',
   department: '',
   description: '',
-  status: 'Delivered / Fulfilled',
+  status: 'In Progress',
 };
 
 export default function ProcurementPage() {
-  const { hasPermission, role } = useAuth();
+  const { hasPermission, role, user } = useAuth();
   const { showToast } = useToast();
   const canEdit = Boolean(role?.is_it_admin);
 
@@ -56,6 +58,7 @@ export default function ProcurementPage() {
   const [defaultApprover, setDefaultApprover] = useState('');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [dateRange, setDateRange] = useState(emptyDateRange);
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -94,27 +97,27 @@ export default function ProcurementPage() {
     load();
     vendorsApi.list().then((res) => setVendors(res.data || [])).catch(() => {});
     usersApi.directory().then((res) => setEmployees(res.data || [])).catch(() => {});
-    usersApi.approvers().then((res) => {
-      const a = (res.data || [])[0];
-      if (a?.name) setDefaultApprover(a.name);
-    }).catch(() => {});
-  }, [hasPermission, load]);
+    if (user?.name) setDefaultApprover(user.name);
+  }, [hasPermission, load, user?.name]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) =>
-      [pid(r), r.item_name || r.itemName, r.vendor, r.assigned_user_email || r.assignedUserEmail, r.department]
+    return rows.filter((r) => {
+      if (!rowInDateRange(r, dateRange, [
+        'approval_date', 'approvalDate', 'delivery_date', 'deliveryDate', 'created_at', 'createdAt',
+      ])) return false;
+      if (!q) return true;
+      return [pid(r), r.item_name || r.itemName, r.vendor, r.assigned_user_email || r.assignedUserEmail, r.department]
         .join(' ')
         .toLowerCase()
-        .includes(q)
-    );
-  }, [rows, search]);
+        .includes(q);
+    });
+  }, [rows, search, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const exportPack = useMemo(() => ({
-    headers: ['Log ID', 'Item', 'Vendor', 'Cost', 'Brand', 'Serial', 'Assigned User', 'Department', 'Delivery Date', 'Approver', 'Status', 'Description'],
+    headers: ['Log ID', 'Item', 'Vendor', 'Cost', 'Brand', 'Serial', 'Assigned User', 'Department', 'Delivery Date', 'Approved by', 'Status', 'Description'],
     rows: filtered.map((r) => [
       pid(r),
       r.item_name || r.itemName || '',
@@ -213,7 +216,7 @@ export default function ProcurementPage() {
       assigned_user_email: email,
       department: row.department || match?.department || '',
       description: row.description || '',
-      status: row.status || 'Delivered / Fulfilled',
+      status: row.status || 'In Progress',
     });
     setOpen(true);
   }
@@ -247,7 +250,7 @@ export default function ProcurementPage() {
         assigned_user_email: form.assigned_user_email.trim().toLowerCase(),
         department: form.department.trim(),
         description: form.description.trim() || null,
-        status: form.status || 'Delivered / Fulfilled',
+        status: form.status || 'In Progress',
       };
       if (editingId) await procurementApi.update(editingId, body);
       else await procurementApi.create(body);
@@ -310,6 +313,10 @@ export default function ProcurementPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
+          <DateRangeFilter
+            value={dateRange}
+            onChange={(next) => { setDateRange(next); setPage(1); }}
+          />
           <TableExportButtons
             filename="procurement-log"
             title="Procurement & Delivery Log"
@@ -471,7 +478,7 @@ export default function ProcurementPage() {
               />
             </div>
             <div className="form-group">
-              <label>Approver Name *</label>
+              <label>Approved by *</label>
               <input
                 className="form-control"
                 required
@@ -553,8 +560,10 @@ export default function ProcurementPage() {
                 value={form.status}
                 onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
               >
-                <option value="Delivered / Fulfilled">Delivered / Fulfilled</option>
-                <option value="In Procurement">In Procurement</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Hold">Hold</option>
+                <option value="Received">Received</option>
+                <option value="Added">Added (update inventory)</option>
               </select>
             </div>
           </div>

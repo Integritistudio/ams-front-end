@@ -7,11 +7,15 @@ import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
 import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
+import DateRangeFilter from '../../components/DateRangeFilter';
+import InventorySourceBadge from '../../components/InventorySourceBadge';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { requisitionsApi, catalogApi, usersApi, uploadsApi, aiApi } from '../../services/api';
 import UserAvatar from '../../components/UserAvatar';
 import { useAvatarDirectory } from '../../hooks/useAvatarDirectory';
+import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
+import { inventorySourceLabel } from '../../lib/inventorySource';
 
 const PAGE_SIZE = 10;
 
@@ -27,11 +31,27 @@ const emptyForm = {
   urgency: 'Standard',
   justification: '',
   department: '',
-  approver_id: '',
   behalf_name: '',
   requester_name: '',
   requester_email: '',
 };
+
+const PENDING_STATUSES = [
+  'Pending Line Manager Approval',
+  'Pending Manager Approval',
+  'Pending IT Pricing',
+  'Pending Finance Approval',
+  'Pending HR Approval',
+  'Pending GM Approval',
+  'Pending Executive Approval',
+];
+
+const IT_QUEUE_STATUSES = [
+  'Approved - Sent to IT',
+  'In Progress',
+  'In Procurement',
+  'On Hold',
+];
 
 export default function RequisitionsPage() {
   return (
@@ -49,26 +69,25 @@ function RequisitionsPageInner() {
   const router = useRouter();
   const isElevated =
     Boolean(role?.is_it_admin) ||
-    Boolean(role?.is_approver) ||
-    Boolean(role?.is_executive);
+    Boolean(role?.is_executive) ||
+    Boolean(role?.is_hr_manager) ||
+    Boolean(role?.is_finance_manager) ||
+    Boolean(role?.is_gm) ||
+    Boolean(user?.is_super_admin);
   const isItAdmin = Boolean(role?.is_it_admin);
   const isExecutiveViewer = Boolean(role?.is_executive);
-  // Approver may see IT-queue items on Asset Requests (already signed off).
-  // Executive sees the full company catalogue here (all statuses).
-  // IT Admin + Staff keep IT-queue under Pending Approvals until Completed.
+  const canSeeInventoryFlag = isElevated;
   const hideItQueueOnAssetRequests =
-    isItAdmin || (!Boolean(role?.is_approver) && !isExecutiveViewer);
-  const IT_QUEUE_STATUSES = [
-    'Approved - Sent to IT',
-    'In Progress',
-    'In Procurement',
-    'On Hold',
-  ];
+    isItAdmin ||
+    (!isExecutiveViewer &&
+      !Boolean(role?.is_hr_manager) &&
+      !Boolean(role?.is_finance_manager) &&
+      !Boolean(role?.is_gm));
   const isItOverride = canViewAll('requisitions') || Boolean(role?.is_it_admin);
-  const isApproverCreator = Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
   const isExecutiveCreator =
-    isExecutiveViewer && !Boolean(role?.is_approver) && !Boolean(role?.is_it_admin);
-  const signerLabel = isApproverCreator ? 'Executive' : 'Approver';
+    isExecutiveViewer && !Boolean(role?.is_it_admin);
+
+  const lineManagerLabel = user?.manager || 'your Line Manager';
 
   function isExecutivePriority(r) {
     if (!r) return false;
@@ -82,12 +101,12 @@ function RequisitionsPageInner() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [mineOnly, setMineOnly] = useState(false);
+  const [dateRange, setDateRange] = useState(emptyDateRange);
   const [page, setPage] = useState(1);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [catalog, setCatalog] = useState([]);
-  const [approvers, setApprovers] = useState([]);
   const [directory, setDirectory] = useState([]);
   const [attachFile, setAttachFile] = useState(null);
   const [aiBusy, setAiBusy] = useState(false);
@@ -181,72 +200,32 @@ function RequisitionsPageInner() {
       requester_email: user?.email || '',
     });
     setCreateOpen(true);
-
-    // Executive: skip manager approval — no Approver selection
-    if (isExecutiveCreator) {
-      setApprovers([]);
-      try {
-        if (isItOverride) {
-          const dirRes = await usersApi.directory();
-          setDirectory((dirRes.data || []).filter((u) => (u.status || 'Active') === 'Active'));
-        }
-      } catch (_e) {
+    try {
+      if (isItOverride) {
+        const dirRes = await usersApi.directory();
+        setDirectory((dirRes.data || []).filter((u) => (u.status || 'Active') === 'Active'));
+      } else {
         setDirectory([]);
       }
-      return;
-    }
-
-    try {
-      const signerReq = isApproverCreator ? usersApi.executives() : usersApi.approvers();
-      const [signerRes, dirRes] = await Promise.all([
-        signerReq,
-        isItOverride ? usersApi.directory().catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
-      ]);
-      const list = signerRes.data || [];
-      setApprovers(list);
-      setDirectory((dirRes.data || []).filter((u) => (u.status || 'Active') === 'Active'));
-      if (list.length === 1) {
-        setForm((f) => ({
-          ...f,
-          department: user?.department || f.department,
-          requester_name: user?.name || f.requester_name,
-          requester_email: user?.email || f.requester_email,
-          approver_id: String(list[0].id),
-        }));
-      }
-    } catch (err) {
-      setApprovers([]);
-      showToast(
-        'Error',
-        err.message ||
-          (isApproverCreator
-            ? 'Could not load executives. Assign Executive role in Role Management.'
-            : 'Could not load approver. Assign Approver role to one user in Role Management.'),
-        'error'
-      );
+    } catch (_e) {
+      setDirectory([]);
     }
   }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const myEmail = (user?.email || '').toLowerCase();
     return rows.filter((r) => {
       const status = r.status || '';
-      const isPending =
-        status === 'Pending Manager Approval' || status.toLowerCase().includes('pending');
-      // Manager-pending normally lives under Pending Approvals.
-      // Executives get a full org view on Asset Requests (all users / all statuses).
+      const isPending = PENDING_STATUSES.includes(status)
+        || status.toLowerCase().includes('pending');
       if (isPending && !isExecutiveViewer) return false;
-
-      // Still awaiting IT Admin action → Pending Approvals for IT Admin & Staff
-      // Approver already signed off, so they may see these here; Executive sees all
-      if (hideItQueueOnAssetRequests && IT_QUEUE_STATUSES.includes(status)) {
-        return false;
-      }
+      if (hideItQueueOnAssetRequests && IT_QUEUE_STATUSES.includes(status)) return false;
 
       const requesterEmail = (r.requester_email || r.requesterEmail || '').toLowerCase();
       if (mineOnly && myEmail && requesterEmail !== myEmail) return false;
-
       if (statusFilter !== 'All' && status !== statusFilter) return false;
+      if (!rowInDateRange(r, dateRange)) return false;
       if (!q) return true;
       const hay = [
         pid(r),
@@ -257,24 +236,30 @@ function RequisitionsPageInner() {
       ].join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, search, statusFilter, mineOnly, user?.email, hideItQueueOnAssetRequests, isExecutiveViewer]);
+  }, [rows, search, statusFilter, dateRange, mineOnly, user?.email, hideItQueueOnAssetRequests, isExecutiveViewer]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const exportPack = useMemo(() => ({
-    headers: ['Request ID', 'Requester', 'Department', 'Type', 'Item', 'Urgency', 'Approver', 'Status', 'Project'],
-    rows: filtered.map((r) => [
-      pid(r),
-      r.requester_name || r.requesterName || '',
-      r.department || '',
-      r.type || '',
-      r.item || '',
-      r.urgency || '',
-      r.approver_name || r.approverName || '',
-      r.status || '',
-      r.project || '',
-    ]),
-  }), [filtered]);
+    headers: canSeeInventoryFlag
+      ? ['Request ID', 'Requester', 'Department', 'Type', 'Item', 'Urgency', 'Line Manager', 'Status', 'Stock', 'Project']
+      : ['Request ID', 'Requester', 'Department', 'Type', 'Item', 'Urgency', 'Line Manager', 'Status', 'Project'],
+    rows: filtered.map((r) => {
+      const base = [
+        pid(r),
+        r.requester_name || r.requesterName || '',
+        r.department || '',
+        r.type || '',
+        r.item || '',
+        r.urgency || '',
+        r.line_manager_name || r.lineManagerName || r.approver_name || r.approverName || '',
+        r.status || '',
+      ];
+      if (canSeeInventoryFlag) base.push(inventorySourceLabel(r));
+      base.push(r.project || '');
+      return base;
+    }),
+  }), [filtered, canSeeInventoryFlag]);
 
   const kpis = useMemo(() => {
     const total = filtered.length;
@@ -308,12 +293,6 @@ function RequisitionsPageInner() {
         const up = await uploadsApi.upload(attachFile);
         attachment_url = up.data?.url || null;
       }
-      const approver = approvers.find((u) => String(u.id) === String(form.approver_id));
-      if (!isExecutiveCreator && !form.approver_id) {
-        showToast('Required', `Please select a ${signerLabel}.`, 'warning');
-        setSaving(false);
-        return;
-      }
       await requisitionsApi.create({
         type: form.type,
         item,
@@ -321,8 +300,6 @@ function RequisitionsPageInner() {
         urgency: form.urgency,
         justification: form.justification,
         department: form.department || user?.department,
-        approver_id: isExecutiveCreator ? undefined : Number(form.approver_id),
-        approver_name: isExecutiveCreator ? undefined : approver?.name,
         requester_name: form.requester_name || user?.name,
         requester_email: form.requester_email || user?.email,
         attachment_url,
@@ -332,7 +309,7 @@ function RequisitionsPageInner() {
         'Submitted',
         isExecutiveCreator
           ? 'Executive Priority request auto-approved and sent to IT Admin.'
-          : 'Request sent for approval. Track it under Pending Approvals.',
+          : `Request sent to ${lineManagerLabel} for Line Manager approval.`,
         'success'
       );
       setCreateOpen(false);
@@ -382,15 +359,11 @@ function RequisitionsPageInner() {
       title="Asset Requests"
       subtitle={
         isExecutiveViewer
-          ? 'Organisation-wide view of all asset requests and statuses. Your sign-off queue (Approver-created only) stays under Pending Approvals.'
-          : 'Completed and rejected asset requisitions. Requests still awaiting manager or IT Admin approval stay under Pending Approvals.'
+          ? 'Organisation-wide view of all asset requests and statuses. Stage approvals stay under Pending Approvals.'
+          : 'Completed and rejected asset requisitions. Requests still awaiting approval or IT action stay under Pending Approvals.'
       }
       actions={(
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => openCreateModal()}
-        >
+        <button type="button" className="btn btn-primary" onClick={() => openCreateModal()}>
           <i className="fa-solid fa-plus" /><span>New Request</span>
         </button>
       )}
@@ -454,7 +427,14 @@ function RequisitionsPageInner() {
             >
               <option value="All">All Statuses</option>
               {isExecutiveViewer ? (
-                <option value="Pending Manager Approval">Pending Manager Approval</option>
+                <>
+                  <option value="Pending Line Manager Approval">Pending Line Manager Approval</option>
+                  <option value="Pending IT Pricing">Pending IT Pricing</option>
+                  <option value="Pending Finance Approval">Pending Finance Approval</option>
+                  <option value="Pending HR Approval">Pending HR Approval</option>
+                  <option value="Pending GM Approval">Pending GM Approval</option>
+                  <option value="Pending Executive Approval">Pending Executive Approval</option>
+                </>
               ) : null}
               {!hideItQueueOnAssetRequests ? (
                 <>
@@ -465,10 +445,13 @@ function RequisitionsPageInner() {
                 </>
               ) : null}
               <option value="Completed">Completed</option>
-              <option value="Fulfilled">Fulfilled</option>
               <option value="Rejected">Rejected</option>
             </select>
           </div>
+          <DateRangeFilter
+            value={dateRange}
+            onChange={(next) => { setDateRange(next); setPage(1); }}
+          />
           <TableExportButtons
             filename="asset-requests"
             title="Asset Requests"
@@ -487,17 +470,18 @@ function RequisitionsPageInner() {
               <th>Type</th>
               <th>Item</th>
               <th>Urgency</th>
-              <th>Approver</th>
+              <th>Line Manager</th>
               <th>Status</th>
+              {canSeeInventoryFlag ? <th>Stock</th> : null}
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <DataLoader colSpan={8} label="Loading requisitions..." />
+              <DataLoader colSpan={canSeeInventoryFlag ? 9 : 8} label="Loading requisitions..." />
             ) : pageRows.length === 0 ? (
               <tr>
-                <td colSpan={8}>
+                <td colSpan={canSeeInventoryFlag ? 9 : 8}>
                   <EmptyState
                     text={
                       isExecutiveViewer
@@ -525,7 +509,7 @@ function RequisitionsPageInner() {
                   <td>{r.type}</td>
                   <td>{r.item}</td>
                   <td>{r.urgency}</td>
-                  <td>{r.approver_name || r.approverName}</td>
+                  <td>{r.line_manager_name || r.lineManagerName || r.approver_name || r.approverName || '—'}</td>
                   <td>
                     <span className={statusBadgeClass(r.status)}>{r.status}</span>
                     {isExecutivePriority(r) ? (
@@ -537,6 +521,9 @@ function RequisitionsPageInner() {
                       </>
                     ) : null}
                   </td>
+                  {canSeeInventoryFlag ? (
+                    <td><InventorySourceBadge row={r} compact /></td>
+                  ) : null}
                   <td>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => openDetail(pid(r))}>
                       <i className="fa-solid fa-eye" /><span>Details</span>
@@ -608,37 +595,19 @@ function RequisitionsPageInner() {
 
           <div className="form-grid-2">
             <div className="form-group">
-              <label>{isExecutiveCreator ? 'Approver' : `Designated ${signerLabel} *`}</label>
+              <label>Approval Routing</label>
               {isExecutiveCreator ? (
+                <input className="form-control" readOnly value="Auto-approved → Sent to IT Admin" />
+              ) : (
                 <input
                   className="form-control"
                   readOnly
-                  value="Auto-approved → Sent to IT Admin"
+                  value={
+                    user?.manager_id || user?.manager
+                      ? `Will be sent to your Line Manager (${lineManagerLabel})`
+                      : 'Will be sent to your Line Manager'
+                  }
                 />
-              ) : (
-                <select
-                  className="form-control form-control-select"
-                  required
-                  value={form.approver_id}
-                  onChange={(e) => setForm((f) => ({ ...f, approver_id: e.target.value }))}
-                >
-                  {approvers.length === 0 ? (
-                    <option value="">
-                      {isApproverCreator
-                        ? 'No Executive configured — set Executive role in Role Management'
-                        : 'No Approver configured — set Approver role in Role Management'}
-                    </option>
-                  ) : (
-                    <>
-                      {approvers.length > 1 ? <option value="">Select {signerLabel}</option> : null}
-                      {approvers.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name} ({u.email})
-                        </option>
-                      ))}
-                    </>
-                  )}
-                </select>
               )}
             </div>
             <div className="form-group">
@@ -658,9 +627,19 @@ function RequisitionsPageInner() {
           {isExecutiveCreator ? (
             <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
               <i className="fa-solid fa-circle-info" style={{ marginRight: 6, color: 'var(--warning)' }} />
-              Executive Priority: manager approval is skipped. This request goes directly to IT Admin.
+              Executive Priority: Line Manager approval is skipped. This request goes directly to IT Admin.
             </p>
-          ) : null}
+          ) : !user?.manager_id && !user?.manager ? (
+            <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: 'var(--warning)', lineHeight: 1.45 }}>
+              <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }} />
+              No Line Manager is assigned on your profile. Ask an admin to set your manager before submitting.
+            </p>
+          ) : (
+            <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+              <i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />
+              Starts as <strong>Pending Line Manager Approval</strong>, then IT pricing and Finance / HR / GM / Executive as needed.
+            </p>
+          )}
 
           <div className="sla-live-preview-box">
             <i className="fa-solid fa-truck-ramp-box" />
@@ -784,13 +763,62 @@ function RequisitionsPageInner() {
                   </>
                 ) : null}
               </div>
-              <div><strong>Approver:</strong> {detail.approver_name || detail.approverName}</div>
+              <div>
+                <strong>Line Manager:</strong>{' '}
+                {detail.line_manager_name || detail.lineManagerName || detail.approver_name || detail.approverName || '—'}
+              </div>
+              {canSeeInventoryFlag ? (
+                <div>
+                  <strong>Stock:</strong>{' '}
+                  <InventorySourceBadge row={detail} />
+                </div>
+              ) : null}
               <div style={{ color: 'var(--text-muted)', fontSize: 12, width: '100%', marginTop: 4 }}>
                 Created: {detail.created_timestamp || detail.createdTimestamp
                   ? new Date(detail.created_timestamp || detail.createdTimestamp).toLocaleString()
                   : '—'}
               </div>
             </div>
+            {canSeeInventoryFlag ? (
+              <div
+                className="hold-notice-box"
+                style={{
+                  background:
+                    detail.inventory_available === true || detail.inventoryAvailable === true
+                      ? 'rgba(16,185,129,0.1)'
+                      : detail.inventory_available === false || detail.inventoryAvailable === false
+                        ? 'rgba(239,68,68,0.08)'
+                        : 'rgba(148,163,184,0.1)',
+                  borderColor:
+                    detail.inventory_available === true || detail.inventoryAvailable === true
+                      ? 'rgba(16,185,129,0.35)'
+                      : detail.inventory_available === false || detail.inventoryAvailable === false
+                        ? 'rgba(239,68,68,0.35)'
+                        : 'var(--border-color)',
+                }}
+              >
+                <i
+                  className={`fa-solid ${
+                    detail.inventory_available === true || detail.inventoryAvailable === true
+                      ? 'fa-boxes-stacked'
+                      : detail.inventory_available === false || detail.inventoryAvailable === false
+                        ? 'fa-cart-shopping'
+                        : 'fa-clock'
+                  }`}
+                  style={{ marginTop: 2 }}
+                />
+                <div>
+                  <strong>Fulfillment source:</strong>
+                  <div style={{ marginTop: 2 }}>
+                    {detail.inventory_available === true || detail.inventoryAvailable === true
+                      ? 'Available in Inventory — prefer assigning from stock.'
+                      : detail.inventory_available === false || detail.inventoryAvailable === false
+                        ? 'Need Purchase — item not in stock; pricing / procurement path applies.'
+                        : 'Inventory check pending — set after Line Manager approval.'}
+                  </div>
+                </div>
+              </div>
+            ) : null}
             <div className="form-grid-2">
               <div className="form-group"><label>Requester</label><input className="form-control" disabled value={detail.requester_name || ''} /></div>
               <div className="form-group"><label>Department</label><input className="form-control" disabled value={detail.department || ''} /></div>

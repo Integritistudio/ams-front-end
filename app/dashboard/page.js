@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import DashboardAnalytics from '../../components/DashboardAnalytics';
+import DashboardHome from '../../components/DashboardHome';
 import { useAuth } from '../../context/AuthContext';
 
 const HUB_TILES = [
@@ -37,6 +37,15 @@ const HUB_TILES = [
     iconColor: 'var(--warning)',
   },
   {
+    href: '/analytics',
+    slug: 'analytics',
+    title: 'Analytics',
+    desc: 'Full charts, trends, and CSV export with daily / weekly / monthly and custom dates.',
+    icon: 'fa-chart-line',
+    color: 'rgba(99,102,241,0.15)',
+    iconColor: '#6366f1',
+  },
+  {
     href: '/my-assets',
     slug: 'my_assets',
     title: 'Assigned Assets',
@@ -63,6 +72,15 @@ const HUB_TILES = [
     color: 'rgba(239,68,68,0.15)',
     iconColor: 'var(--danger)',
   },
+  {
+    href: '/account',
+    slug: 'account',
+    title: 'My Account',
+    desc: 'Update your profile photo, contact details, and corporate password.',
+    icon: 'fa-user-gear',
+    color: 'rgba(14,165,233,0.15)',
+    iconColor: '#0ea5e9',
+  },
 ];
 
 export default function DashboardPage() {
@@ -72,7 +90,13 @@ export default function DashboardPage() {
   const [reqDisclaimer, setReqDisclaimer] = useState(false);
 
   const visibleTiles = useMemo(
-    () => HUB_TILES.filter((t) => hasPermission(t.slug)),
+    () =>
+      HUB_TILES.filter(
+        (t) =>
+          t.slug === 'account' ||
+          hasPermission(t.slug) ||
+          (t.slug === 'analytics' && hasPermission('dashboard'))
+      ),
     [hasPermission]
   );
 
@@ -87,7 +111,7 @@ export default function DashboardPage() {
   return (
     <AppShell
       title={`Welcome, ${(user?.name || 'User').split(' ')[0]}`}
-      subtitle="Centralized IT Service Desk & Asset Procurement Portal."
+      subtitle="Your operational hub — approvals, tickets, requests, and quick links."
       actions={(
         <>
           {hasPermission('tickets') ? (
@@ -103,12 +127,10 @@ export default function DashboardPage() {
         </>
       )}
     >
-      <DashboardAnalytics />
-
-      <h3 style={{ fontSize: 16, fontWeight: 700, margin: '28px 0 14px', color: 'var(--text-main)' }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 14px', color: 'var(--text-main)' }}>
         Portal Modules & Quick Hub
       </h3>
-      <div className="hub-tiles-grid">
+      <div className="hub-tiles-grid" style={{ marginBottom: 22 }}>
         {visibleTiles.map((tile) => (
           <div
             key={tile.href}
@@ -126,6 +148,8 @@ export default function DashboardPage() {
           </div>
         ))}
       </div>
+
+      <DashboardHome />
 
       <Modal
         open={ticketDisclaimer}

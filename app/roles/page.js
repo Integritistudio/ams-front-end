@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
+import { statusBadgeClass, Pagination, EmptyState } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -17,12 +17,23 @@ const emptyForm = {
   description: '',
   is_active: true,
   is_it_admin: false,
-  is_approver: false,
   is_executive: false,
+  is_hr_manager: false,
+  is_finance_manager: false,
+  is_gm: false,
+  can_export: false,
 };
 
+const ROLE_TYPE_FLAGS = [
+  { key: 'is_it_admin', label: 'IT Admin' },
+  { key: 'is_hr_manager', label: 'HR Manager' },
+  { key: 'is_finance_manager', label: 'Finance Manager' },
+  { key: 'is_gm', label: 'GM' },
+];
+
 export default function RolesPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
+  const isSuperAdmin = Boolean(user?.is_super_admin);
   const { showToast } = useToast();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,22 +77,6 @@ export default function RolesPage() {
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const exportPack = useMemo(() => ({
-    headers: ['Role ID', 'Name', 'Special', 'Description', 'Users', 'Status'],
-    rows: filtered.map((r) => [
-      r.id,
-      r.name || '',
-      [
-        r.is_it_admin ? 'IT Admin' : null,
-        r.is_approver ? 'Approver' : null,
-        r.is_executive ? 'Executive' : null,
-      ].filter(Boolean).join(', ') || '—',
-      r.description || '',
-      r.user_count ?? r.userCount ?? 0,
-      r.is_active === false || r.isActive === false ? 'Inactive' : 'Active',
-    ]),
-  }), [filtered]);
-
   async function openCreate() {
     setEditingId(null);
     setForm(emptyForm);
@@ -111,8 +106,11 @@ export default function RolesPage() {
       description: role.description || '',
       is_active: role.is_active !== false && role.isActive !== false,
       is_it_admin: Boolean(role.is_it_admin),
-      is_approver: Boolean(role.is_approver),
       is_executive: Boolean(role.is_executive),
+      is_hr_manager: Boolean(role.is_hr_manager),
+      is_finance_manager: Boolean(role.is_finance_manager),
+      is_gm: Boolean(role.is_gm),
+      can_export: Boolean(role.can_export),
     });
     setEditOpen(true);
     try {
@@ -145,10 +143,12 @@ export default function RolesPage() {
     setSaving(true);
     try {
       let roleId = editingId;
+      const payload = { ...form };
+      if (!isSuperAdmin) delete payload.can_export;
       if (editingId) {
-        await rolesApi.update(editingId, form);
+        await rolesApi.update(editingId, payload);
       } else {
-        const res = await rolesApi.create(form);
+        const res = await rolesApi.create(payload);
         roleId = res.data?.id;
       }
       if (roleId && permissions.length) {
@@ -224,12 +224,6 @@ export default function RolesPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
-          <TableExportButtons
-            filename="roles"
-            title="Roles & Permissions"
-            headers={exportPack.headers}
-            rows={exportPack.rows}
-          />
         </div>
       </div>
 
@@ -240,6 +234,7 @@ export default function RolesPage() {
               <th>Role ID</th>
               <th>Name</th>
               <th>Special</th>
+              <th>Export</th>
               <th>Description</th>
               <th>Users</th>
               <th>Status</th>
@@ -248,9 +243,9 @@ export default function RolesPage() {
           </thead>
           <tbody>
             {loading ? (
-              <DataLoader colSpan={7} label="Loading roles..." />
+              <DataLoader colSpan={8} label="Loading roles..." />
             ) : pageRows.length === 0 ? (
-              <tr><td colSpan={7}><EmptyState text="No roles found." /></td></tr>
+              <tr><td colSpan={8}><EmptyState text="No roles found." /></td></tr>
             ) : (
               pageRows.map((r) => (
                 <tr key={r.id}>
@@ -260,13 +255,27 @@ export default function RolesPage() {
                     {r.is_it_admin ? (
                       <span className="badge badge-info" style={{ marginRight: 4 }}>IT Admin</span>
                     ) : null}
-                    {r.is_approver ? (
-                      <span className="badge badge-warning" style={{ marginRight: 4 }}>Approver</span>
+                    {r.is_hr_manager ? (
+                      <span className="badge badge-info" style={{ marginRight: 4 }}>HR Manager</span>
+                    ) : null}
+                    {r.is_finance_manager ? (
+                      <span className="badge badge-warning" style={{ marginRight: 4 }}>Finance</span>
+                    ) : null}
+                    {r.is_gm ? (
+                      <span className="badge badge-progress" style={{ marginRight: 4 }}>GM</span>
                     ) : null}
                     {r.is_executive ? (
                       <span className="badge badge-progress">Executive</span>
                     ) : null}
-                    {!r.is_it_admin && !r.is_approver && !r.is_executive ? '—' : null}
+                    {!r.is_it_admin && !r.is_executive
+                      && !r.is_hr_manager && !r.is_finance_manager && !r.is_gm ? '—' : null}
+                  </td>
+                  <td>
+                    {r.can_export ? (
+                      <span className="badge badge-resolved">Allowed</span>
+                    ) : (
+                      <span className="badge badge-hold">No</span>
+                    )}
                   </td>
                   <td>{r.description || '—'}</td>
                   <td>{r.user_count ?? r.userCount ?? 0}</td>
@@ -343,79 +352,72 @@ export default function RolesPage() {
             }}
           >
             <label style={{ fontWeight: 700, color: 'var(--primary)', marginBottom: 8, display: 'block' }}>
-              Special role designation
+              Role type flags
             </label>
             <p style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.45 }}>
-              <strong>IT Admin</strong> and <strong>Approver</strong>: one role each, one user each.
-              <strong> Executive</strong>: can be enabled on multiple roles and assigned to many users (view all pending approvals, cannot approve).
+              These flags mark what the role does in workflows (approvals, IT queue, etc.).
+              Multiple users can share the same role — IT Admin, HR Manager, GM, Executive, and Finance Manager are not limited to one person.
             </p>
             <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(form.is_it_admin)}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    if (on) {
-                      const other = rows.find(
-                        (r) => r.is_it_admin && Number(r.id) !== Number(editingId)
-                      );
-                      if (other) {
-                        showToast(
-                          'Already enabled',
-                          `IT Admin is already enabled for role "${other.name}". It can only be enabled for one role.`,
-                          'warning'
-                        );
-                        return;
-                      }
-                    }
-                    setForm((f) => ({
-                      ...f,
-                      is_it_admin: on,
-                      is_approver: on ? false : f.is_approver,
-                    }));
-                  }}
-                />
-                <span><strong>IT Admin</strong> — ticket assignee; view all approvals</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(form.is_approver)}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    if (on) {
-                      const other = rows.find(
-                        (r) => r.is_approver && Number(r.id) !== Number(editingId)
-                      );
-                      if (other) {
-                        showToast(
-                          'Already enabled',
-                          `Approver is already enabled for role "${other.name}". It can only be enabled for one role.`,
-                          'warning'
-                        );
-                        return;
-                      }
-                    }
-                    setForm((f) => ({
-                      ...f,
-                      is_approver: on,
-                      is_it_admin: on ? false : f.is_it_admin,
-                    }));
-                  }}
-                />
-                <span><strong>Approver</strong> — approve / reject asset requests</span>
-              </label>
+              {ROLE_TYPE_FLAGS.map(({ key, label }) => (
+                <label
+                  key={key}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form[key])}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setForm((f) => ({ ...f, [key]: on }));
+                    }}
+                  />
+                  <span>
+                    <strong>{label}</strong>
+                    {key === 'is_it_admin' ? ' — ticket assignee; IT pricing & fulfilment' : null}
+                    {key === 'is_hr_manager' ? ' — HR approval stage' : null}
+                    {key === 'is_finance_manager' ? ' — Finance approval stage' : null}
+                    {key === 'is_gm' ? ' — GM approval stage' : null}
+                  </span>
+                </label>
+              ))}
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', margin: 0 }}>
                 <input
                   type="checkbox"
                   checked={Boolean(form.is_executive)}
                   onChange={(e) => setForm((f) => ({ ...f, is_executive: e.target.checked }))}
                 />
-                <span><strong>Executive</strong> — view all pending approvals (no approve)</span>
+                <span><strong>Executive</strong> — view all; can approve at Pending GM / Executive</span>
               </label>
             </div>
           </div>
+
+          {isSuperAdmin ? (
+            <div
+              className="form-group"
+              style={{
+                background: 'rgba(6,182,212,0.06)',
+                border: '1px solid rgba(6,182,212,0.25)',
+                padding: 12,
+                borderRadius: 8,
+                marginBottom: 16,
+              }}
+            >
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.can_export)}
+                  onChange={(e) => setForm((f) => ({ ...f, can_export: e.target.checked }))}
+                />
+                <span>
+                  <strong>Allow data export</strong>
+                  <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-muted)', marginTop: 4 }}>
+                    Users with this role can use CSV / PDF / Print on list tables. Super Admin always can export.
+                  </span>
+                </span>
+              </label>
+            </div>
+          ) : null}
 
           <div className="account-section-heading" style={{ marginTop: 8 }}>
             <i className="fa-solid fa-lock" /><span>Module Permissions</span>

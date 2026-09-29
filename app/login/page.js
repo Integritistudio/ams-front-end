@@ -27,6 +27,14 @@ export default function LoginPage() {
       setEmail(remembered);
       setRemember(true);
     }
+    try {
+      if (sessionStorage.getItem('integriti_session_timeout') === '1') {
+        sessionStorage.removeItem('integriti_session_timeout');
+        setError('Your session expired due to inactivity. Please sign in again.');
+      }
+    } catch (_e) {
+      /* ignore */
+    }
   }, []);
 
   useEffect(() => {
@@ -47,7 +55,7 @@ export default function LoginPage() {
     setSuccess('');
     setSubmitting(true);
     try {
-      await login(email.trim(), password);
+      await login(email.trim(), password, remember);
       if (remember) localStorage.setItem('remember_email', email.trim());
       else localStorage.removeItem('remember_email');
       router.push('/dashboard');
@@ -85,14 +93,16 @@ export default function LoginPage() {
         {error ? <div className="alert-box alert-error" style={{ display: 'block' }}>{error}</div> : null}
         {success ? <div className="alert-box alert-success" style={{ display: 'block' }}>{success}</div> : null}
 
-        <form onSubmit={handleSubmit} autoComplete="off">
+        <form onSubmit={handleSubmit} autoComplete="on">
           <div className="form-group">
             <label htmlFor="userEmail">Official Email / User ID</label>
             <div className="input-wrapper">
               <i className="fa-regular fa-envelope input-icon" />
               <input
-                type="text"
+                type="email"
                 id="userEmail"
+                name="username"
+                autoComplete="username"
                 placeholder="name@integriti.io or integritistudio.com"
                 required
                 value={email}
@@ -108,6 +118,8 @@ export default function LoginPage() {
               <input
                 type={showPass ? 'text' : 'password'}
                 id="userPassword"
+                name="password"
+                autoComplete="current-password"
                 placeholder="••••••••"
                 required
                 value={password}

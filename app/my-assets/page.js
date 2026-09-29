@@ -5,9 +5,11 @@ import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import { statusBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { assetsApi } from '../../services/api';
+import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
 
 const PAGE_SIZE = 10;
 
@@ -22,6 +24,7 @@ export default function MyAssetsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
+  const [dateRange, setDateRange] = useState(emptyDateRange);
   const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
@@ -45,13 +48,14 @@ export default function MyAssetsPage() {
     const q = search.trim().toLowerCase();
     return rows.filter((a) => {
       if (category !== 'All' && (a.category || '') !== category) return false;
+      if (!rowInDateRange(a, dateRange, ['assigned_date', 'assignedDate', 'created_at', 'createdAt'])) return false;
       if (!q) return true;
       const hay = [pid(a), a.asset_code || a.assetCode, a.name, a.brand, a.serial_number || a.serialNumber]
         .join(' ')
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [rows, search, category]);
+  }, [rows, search, category, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -104,6 +108,10 @@ export default function MyAssetsPage() {
               <option value="Software License">Software License</option>
             </select>
           </div>
+          <DateRangeFilter
+            value={dateRange}
+            onChange={(next) => { setDateRange(next); setPage(1); }}
+          />
           <TableExportButtons
             filename="assigned-assets"
             title="Assigned Assets"

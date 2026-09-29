@@ -6,11 +6,20 @@ import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
 import { Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { assetsApi, usersApi } from '../../services/api';
+import { assetsApi, usersApi, requisitionsApi } from '../../services/api';
+import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
 
 const PAGE_SIZE = 10;
+
+const LINKABLE_REQ_STATUSES = [
+  'Approved - Sent to IT',
+  'In Progress',
+  'In Procurement',
+  'On Hold',
+];
 
 function pid(a) {
   return a?.public_id || a?.publicId || a?.id;
@@ -34,6 +43,7 @@ const emptyForm = {
   serial_number: '',
   assigned_date: '',
   note: '',
+  source_req_id: '',
 };
 
 export default function AssignAssetsPage() {
@@ -41,9 +51,11 @@ export default function AssignAssetsPage() {
   const { showToast } = useToast();
   const [rows, setRows] = useState([]);
   const [users, setUsers] = useState([]);
+  const [pendingReqs, setPendingReqs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
+  const [dateRange, setDateRange] = useState(emptyDateRange);
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -66,19 +78,27 @@ export default function AssignAssetsPage() {
     if (!hasPermission('assign_assets')) return;
     load();
     usersApi.directory().then((res) => setUsers(res.data || [])).catch(() => {});
+    requisitionsApi
+      .list()
+      .then((res) => {
+        const list = (res.data || []).filter((r) => LINKABLE_REQ_STATUSES.includes(r.status));
+        setPendingReqs(list);
+      })
+      .catch(() => {});
   }, [hasPermission, load]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((a) => {
       if (category !== 'All' && (a.category || '') !== category) return false;
+      if (!rowInDateRange(a, dateRange, ['assigned_date', 'assignedDate', 'created_at', 'createdAt'])) return false;
       if (!q) return true;
       return [pid(a), a.asset_code, a.name, a.user_email || a.userEmail, a.brand]
         .join(' ')
         .toLowerCase()
         .includes(q);
     });
-  }, [rows, search, category]);
+  }, [rows, search, category, dateRange]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -161,6 +181,7 @@ export default function AssignAssetsPage() {
       serial_number: row.serial_number || row.serialNumber || '',
       assigned_date: (row.assigned_date || row.assignedDate || todayISO()).toString().slice(0, 10),
       note: row.note || '',
+      source_req_id: row.source_req_id || row.source_req_public_id || '',
     });
     setOpen(true);
   }
@@ -183,6 +204,7 @@ export default function AssignAssetsPage() {
         serial_number: form.serial_number.trim(),
         assigned_date: form.assigned_date || todayISO(),
         note: form.note.trim() || null,
+        source_req_id: form.source_req_id || null,
       };
       // asset_code is auto-generated on create; keep existing on edit
       if (editingId) {
@@ -254,6 +276,10 @@ export default function AssignAssetsPage() {
               <option value="Peripheral">Peripheral / Accessory</option>
             </select>
           </div>
+          <DateRangeFilter
+            value={dateRange}
+            onChange={(next) => { setDateRange(next); setPage(1); }}
+          />
           <TableExportButtons
             filename="user-assets"
             title="User Asset Assignment"
@@ -274,19 +300,21 @@ export default function AssignAssetsPage() {
               <th>Asset Code</th>
               <th>Item Name</th>
               <th>Brand / Serial</th>
+              <th>Linked Request</th>
               <th>Assigned Date</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <DataLoader colSpan={9} label="Loading assignments..." />
+              <DataLoader colSpan={10} label="Loading assignments..." />
             ) : pageRows.length === 0 ? (
-              <tr><td colSpan={9}><EmptyState text="No asset assignments found." /></td></tr>
+              <tr><td colSpan={10}><EmptyState text="No asset assignments found." /></td></tr>
             ) : (
               pageRows.map((a) => {
                 const email = a.user_email || a.userEmail;
                 const emp = users.find((u) => u.email?.toLowerCase() === email?.toLowerCase());
+                const linked = a.source_req_public_id || a.source_req_id;
                 return (
                   <tr key={pid(a)}>
                     <td><strong>#{pid(a)}</strong></td>
@@ -300,6 +328,7 @@ export default function AssignAssetsPage() {
                       <br />
                       <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{a.serial_number || a.serialNumber || ''}</span>
                     </td>
+                    <td>{linked ? `#${linked}` : 'Not linked to any request'}</td>
                     <td>
                       {a.assigned_date || a.assignedDate
                         ? new Date(a.assigned_date || a.assignedDate).toLocaleDateString()
@@ -373,6 +402,22 @@ export default function AssignAssetsPage() {
               <label>Employee Email</label>
               <input type="email" className="form-control" readOnly value={form.user_email} />
             </div>
+          </div>
+
+          <div className="form-group">
+            <label>Link to Asset Request (optional)</label>
+            <select
+              className="form-control form-control-select"
+              value={form.source_req_id}
+              onChange={(e) => setForm((f) => ({ ...f, source_req_id: e.target.value }))}
+            >
+              <option value="">Not linked to any request</option>
+              {pendingReqs.map((r) => (
+                <option key={pid(r)} value={pid(r)}>
+                  #{pid(r)} — {r.item} ({r.requester_name || r.requesterName}) [{r.status}]
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="form-grid-2">

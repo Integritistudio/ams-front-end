@@ -757,6 +757,7 @@ body {
   color: var(--text-main);
   -webkit-text-fill-color: var(--text-main);
   caret-color: var(--text-main);
+  background-color: var(--bg-input);
 }
 
 #section-login .input-wrapper input::placeholder,
@@ -764,6 +765,29 @@ body {
   color: var(--text-muted);
   -webkit-text-fill-color: var(--text-muted);
   opacity: 1;
+}
+
+/* Chrome / Edge password-manager autofill often paints white text on white —
+   force theme colors so email stays readable and password stays masked bullets. */
+#section-login .input-wrapper input:-webkit-autofill,
+#section-login .input-wrapper input:-webkit-autofill:hover,
+#section-login .input-wrapper input:-webkit-autofill:focus,
+#section-login .input-wrapper input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-input) inset !important;
+  box-shadow: 0 0 0 1000px var(--bg-input) inset !important;
+  -webkit-text-fill-color: var(--text-main) !important;
+  color: var(--text-main) !important;
+  caret-color: var(--text-main) !important;
+  background-color: var(--bg-input) !important;
+  background-clip: content-box !important;
+  transition: background-color 99999s ease-in-out 0s;
+}
+
+#section-login .input-wrapper input[type="password"]:-webkit-autofill,
+#section-login .input-wrapper input[type="password"]:-webkit-autofill:hover,
+#section-login .input-wrapper input[type="password"]:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text-main) !important;
+  color: var(--text-main) !important;
 }
 
 .form-group {
@@ -1325,6 +1349,39 @@ body {
   height: 36px;
   font-size: 12.5px;
   padding: 4px 10px;
+}
+
+.date-range-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.date-range-preset select {
+  width: 160px;
+  min-width: 150px;
+}
+
+.date-range-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.date-range-custom .form-control {
+  width: auto;
+  min-width: 138px;
+  height: 36px;
+  padding: 4px 10px;
+  font-size: 12.5px;
+}
+
+.date-range-sep {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .export-btn-group {
@@ -2950,4 +3007,162 @@ textarea.form-control {
 .user-form-avatar-actions {
   flex: 1;
   min-width: 0;
+}
+
+/* ===== Operational Home Dashboard ===== */
+.dash-hub { margin-bottom: 8px; }
+.dash-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+.dash-span-2 { grid-column: span 2; }
+.dash-hub-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+  height: 100%;
+}
+.dash-hub-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+.dash-hub-card-head h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dash-hub-card-head h3 i { color: var(--primary); }
+.dash-hub-card-body {
+  padding: 10px 14px 12px;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+.dash-hub-card-body-chart {
+  justify-content: center;
+}
+.dash-hub-empty-state {
+  flex: 1;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 16px 12px;
+  color: var(--text-muted);
+}
+.dash-hub-empty-state i {
+  font-size: 28px;
+  opacity: 0.55;
+  color: var(--primary);
+}
+.dash-hub-empty-state p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 220px;
+}
+.dash-hub-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 12px 4px;
+}
+.dash-hub-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+.dash-hub-tab {
+  border: 1px solid var(--border-color);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.dash-hub-tab.active {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.35);
+  color: var(--primary);
+}
+.dash-hub-tab-count {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+.dash-hub-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.dash-hub-list > li {
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-input);
+}
+.dash-hub-list-click { cursor: pointer; }
+.dash-hub-list-click:hover { border-color: rgba(37, 99, 235, 0.4); }
+.dash-hub-list-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.dash-hub-list-title {
+  font-weight: 600;
+  color: var(--text-main);
+  font-size: 13px;
+  flex: 1;
+  min-width: 120px;
+}
+.dash-hub-list-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dash-hub-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+@media (max-width: 900px) {
+  .dash-hub-grid { grid-template-columns: 1fr; }
+  .dash-span-2 { grid-column: span 1; }
+  .dash-hub-card { min-height: 240px; }
 }

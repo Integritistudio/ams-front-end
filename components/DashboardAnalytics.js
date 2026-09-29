@@ -34,6 +34,7 @@ import {
 } from '../services/api';
 import { exportRowsToCsv, statusBadgeClass } from './uiHelpers';
 import UserAvatar from './UserAvatar';
+import DateRangeFilter from './DateRangeFilter';
 import {
   CHART_COLORS,
   buildTimeSeries,
@@ -43,6 +44,7 @@ import {
   isOpenTicket,
   seriesToExport,
 } from '../lib/dashboardAnalytics';
+import { emptyDateRange, rowInDateRange } from '../lib/dateRange';
 
 function ChartCard({ title, subtitle, exportName, exportHeaders, exportRows, children, actions, className = '' }) {
   function onExport() {
@@ -144,6 +146,7 @@ export default function DashboardAnalytics() {
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('monthly');
   const [scope, setScope] = useState('all'); // 'all' | 'mine' — elevated roles only
+  const [dateRange, setDateRange] = useState(emptyDateRange);
   const [allTickets, setAllTickets] = useState([]);
   const [allReqs, setAllReqs] = useState([]);
   const [allAssets, setAllAssets] = useState([]);
@@ -152,8 +155,11 @@ export default function DashboardAnalytics() {
 
   const isElevated =
     Boolean(role?.is_it_admin) ||
-    Boolean(role?.is_approver) ||
-    Boolean(role?.is_executive);
+    Boolean(role?.is_executive) ||
+    Boolean(role?.is_hr_manager) ||
+    Boolean(role?.is_finance_manager) ||
+    Boolean(role?.is_gm) ||
+    Boolean(user?.is_super_admin);
 
   useEffect(() => {
     let cancelled = false;
@@ -201,21 +207,39 @@ export default function DashboardAnalytics() {
 
   const useMine = !isElevated || scope === 'mine';
 
-  const tickets = useMemo(
+  const ticketsScoped = useMemo(
     () => (useMine ? filterOwn(allTickets, user) : allTickets),
     [allTickets, user, useMine]
   );
-  const reqs = useMemo(
+  const reqsScoped = useMemo(
     () => (useMine ? filterOwn(allReqs, user) : allReqs),
     [allReqs, user, useMine]
   );
-  const assets = useMemo(
+  const assetsScoped = useMemo(
     () => (useMine ? filterOwn(allAssets, user) : allAssets),
     [allAssets, user, useMine]
   );
-  const procurement = useMemo(
+  const procurementScoped = useMemo(
     () => (useMine ? filterOwn(allProcurement, user) : allProcurement),
     [allProcurement, user, useMine]
+  );
+
+  const dateFields = ['created_timestamp', 'createdTimestamp', 'created_at', 'createdAt', 'purchase_date', 'assigned_date', 'assignedDate'];
+  const tickets = useMemo(
+    () => ticketsScoped.filter((r) => rowInDateRange(r, dateRange, dateFields)),
+    [ticketsScoped, dateRange]
+  );
+  const reqs = useMemo(
+    () => reqsScoped.filter((r) => rowInDateRange(r, dateRange, dateFields)),
+    [reqsScoped, dateRange]
+  );
+  const assets = useMemo(
+    () => assetsScoped.filter((r) => rowInDateRange(r, dateRange, dateFields)),
+    [assetsScoped, dateRange]
+  );
+  const procurement = useMemo(
+    () => procurementScoped.filter((r) => rowInDateRange(r, dateRange, dateFields)),
+    [procurementScoped, dateRange]
   );
 
   const avatarByEmail = useMemo(() => {
@@ -395,6 +419,7 @@ export default function DashboardAnalytics() {
         <div className="analytics-header-controls">
           {isElevated ? <ScopeToggle value={scope} onChange={setScope} /> : null}
           <PeriodToggle value={period} onChange={setPeriod} />
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
         </div>
       </div>
 

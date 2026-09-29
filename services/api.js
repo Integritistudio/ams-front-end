@@ -1,16 +1,23 @@
 import { beginApiLoading, endApiLoading, apiLoadingLabelFor } from '../lib/apiLoadingBridge';
+import { touchSessionActivity } from '../lib/sessionActivity';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3303';
+const TOKEN_KEY = 'helpdesk_token';
 
 function getToken() {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('helpdesk_token');
+  return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY);
 }
 
-export function setToken(token) {
+/** @param {string|null} token @param {{ persist?: boolean }} [opts] persist=true → localStorage (Remember me) */
+export function setToken(token, opts = {}) {
   if (typeof window === 'undefined') return;
-  if (token) localStorage.setItem('helpdesk_token', token);
-  else localStorage.removeItem('helpdesk_token');
+  const persist = opts.persist !== false;
+  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
+  if (!token) return;
+  if (persist) localStorage.setItem(TOKEN_KEY, token);
+  else sessionStorage.setItem(TOKEN_KEY, token);
 }
 
 export async function api(path, options = {}) {
@@ -55,6 +62,7 @@ export async function api(path, options = {}) {
       err.data = data;
       throw err;
     }
+    if (token) touchSessionActivity();
     return data;
   } finally {
     if (showLoader) endApiLoading();
@@ -62,7 +70,12 @@ export async function api(path, options = {}) {
 }
 
 export const authApi = {
-  login: (email, password) => api('/api/auth/login', { method: 'POST', body: { email, password }, loaderLabel: 'Signing in…' }),
+  login: (email, password, remember = false) =>
+    api('/api/auth/login', {
+      method: 'POST',
+      body: { email, password, remember: Boolean(remember) },
+      loaderLabel: 'Signing in…',
+    }),
   logout: () => api('/api/auth/logout', { method: 'POST', loaderLabel: 'Signing out…' }),
   me: () => api('/api/auth/me', { silent: true }),
   updateProfile: (body) => api('/api/auth/profile', { method: 'PATCH', body }),
@@ -117,6 +130,8 @@ export const ticketsApi = {
   get: (id) => api(`/api/tickets/${id}`),
   create: (body) => api('/api/tickets', { method: 'POST', body }),
   update: (id, body) => api(`/api/tickets/${id}`, { method: 'PUT', body }),
+  lineManagerReview: (id, body) =>
+    api(`/api/tickets/${id}/line-manager`, { method: 'PATCH', body }),
   inProgress: (id) => api(`/api/tickets/${id}/in-progress`, { method: 'PATCH' }),
   hold: (id, holdReason) => api(`/api/tickets/${id}/hold`, { method: 'PATCH', body: { reason: holdReason, hold_reason: holdReason } }),
   resume: (id) => api(`/api/tickets/${id}/resume`, { method: 'PATCH' }),
@@ -129,11 +144,23 @@ export const requisitionsApi = {
   create: (body) => api('/api/requisitions', { method: 'POST', body }),
   approve: (id) => api(`/api/requisitions/${id}/approve`, { method: 'PATCH' }),
   reject: (id) => api(`/api/requisitions/${id}/reject`, { method: 'PATCH' }),
+  submitPricing: (id, body) =>
+    api(`/api/requisitions/${id}/submit-pricing`, { method: 'PATCH', body }),
   hold: (id, holdReason) => api(`/api/requisitions/${id}/hold`, { method: 'PATCH', body: { reason: holdReason, hold_reason: holdReason } }),
   inProgress: (id) => api(`/api/requisitions/${id}/in-progress`, { method: 'PATCH' }),
   resume: (id) => api(`/api/requisitions/${id}/resume`, { method: 'PATCH' }),
   complete: (id, note) => api(`/api/requisitions/${id}/complete`, { method: 'PATCH', body: { note: note || 'Asset request marked completed' } }),
   reply: (id, text) => api(`/api/requisitions/${id}/reply`, { method: 'POST', body: { text } }),
+};
+export const inventoryApi = {
+  list: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return api(`/api/inventory${q ? `?${q}` : ''}`);
+  },
+  get: (id) => api(`/api/inventory/${id}`),
+  create: (body) => api('/api/inventory', { method: 'POST', body }),
+  update: (id, body) => api(`/api/inventory/${id}`, { method: 'PUT', body }),
+  remove: (id) => api(`/api/inventory/${id}`, { method: 'DELETE' }),
 };
 export const vendorsApi = {
   list: () => api('/api/vendors'),
@@ -187,7 +214,6 @@ export const settingsApi = {
   getSmtp: () => api('/api/settings/smtp'),
   updateSmtp: (body) => api('/api/settings/smtp', { method: 'PUT', body }),
   testSmtp: (to) => api('/api/settings/smtp/test', { method: 'POST', body: { to } }),
-  getFileEncryption: () => api('/api/settings/file-encryption'),
   getOpenAI: () => api('/api/settings/openai'),
   updateOpenAI: (body) => api('/api/settings/openai', { method: 'PUT', body }),
 };

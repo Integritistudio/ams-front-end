@@ -5,15 +5,18 @@ import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import { EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { logsApi } from '../../services/api';
+import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
 
 export default function LogsPage() {
   const { hasPermission } = useAuth();
   const { showToast } = useToast();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState(emptyDateRange);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -32,9 +35,14 @@ export default function LogsPage() {
     load();
   }, [hasPermission, load]);
 
+  const filtered = useMemo(
+    () => logs.filter((log) => rowInDateRange(log, dateRange)),
+    [logs, dateRange]
+  );
+
   const exportPack = useMemo(() => ({
     headers: ['Time', 'Action', 'Target', 'Details', 'User Name', 'User Email', 'User Role'],
-    rows: logs.map((log) => [
+    rows: filtered.map((log) => [
       log.created_at || log.createdAt
         ? new Date(log.created_at || log.createdAt).toLocaleString()
         : '',
@@ -45,7 +53,7 @@ export default function LogsPage() {
       log.user_email || log.userEmail || '',
       log.user_role || log.userRole || '',
     ]),
-  }), [logs]);
+  }), [filtered]);
 
   async function clearLogs() {
     if (!window.confirm('Clear your audit logs? This cannot be undone.')) return;
@@ -79,6 +87,7 @@ export default function LogsPage() {
             </p>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <DateRangeFilter value={dateRange} onChange={setDateRange} />
             <TableExportButtons
               filename="activity-logs"
               title="System Activity & Audit Trail"
@@ -93,10 +102,10 @@ export default function LogsPage() {
         <div className="logs-timeline">
           {loading ? (
             <DataLoader label="Loading activity logs..." />
-          ) : logs.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <EmptyState text="No activity logs found." />
           ) : (
-            logs.map((log) => (
+            filtered.map((log) => (
               <div key={log.id || `${log.created_at}-${log.action}`} className="log-entry-item">
                 <div className="log-icon-bullet"><i className="fa-solid fa-bolt" /></div>
                 <div className="log-entry-content">

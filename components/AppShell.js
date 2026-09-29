@@ -9,9 +9,10 @@ import { notificationsApi } from '../services/api';
 import DataLoader from './DataLoader';
 import LoginNoticeModal from './LoginNoticeModal';
 import UserAvatar from './UserAvatar';
-import { startShift, pauseShift, getShiftElapsedMs, formatShiftHours } from '../lib/shiftHours';
+import { formatIdleCountdown, getIdleRemainingMs, getSessionTimeoutMinutes } from '../lib/sessionActivity';
 const NAV_ITEMS = [
   { href: '/dashboard', slug: 'dashboard', label: 'Home Dashboard', icon: 'fa-house' },
+  { href: '/analytics', slug: 'analytics', label: 'Analytics', icon: 'fa-chart-line' },
   { href: '/tickets', slug: 'tickets', label: 'My Tickets', icon: 'fa-ticket', adminLabel: 'All Tickets' },
   { href: '/requisitions', slug: 'requisitions', label: 'Asset Requests', icon: 'fa-cart-flatbed' },
   { href: '/approvals', slug: 'approvals', label: 'Pending Approvals', icon: 'fa-clipboard-check', badge: true },
@@ -24,15 +25,23 @@ const NAV_ITEMS = [
 
 const ADMIN_ITEMS = [
   { href: '/assign-assets', slug: 'assign_assets', label: 'Assign Assets', icon: 'fa-box-open' },
+  { href: '/inventory', slug: 'inventory', label: 'Inventory Management', icon: 'fa-boxes-stacked' },
   { href: '/vendors', slug: 'vendors', label: 'Approved Vendors', icon: 'fa-store' },
-  { href: '/settings', slug: 'settings', label: 'Settings', icon: 'fa-gear' },
   { href: '/users', slug: 'users', label: 'User Management', icon: 'fa-users-gear' },
   { href: '/roles', slug: 'roles', label: 'Role Management', icon: 'fa-user-shield' },
-  { href: '/email-settings', slug: 'email_settings', label: 'Email Settings', icon: 'fa-envelope-open-text' },
+  // Settings + Email Settings: Super Admin only (also enforced on API)
+  { href: '/settings', slug: 'settings', label: 'Settings', icon: 'fa-gear', superAdminOnly: true },
+  { href: '/email-settings', slug: 'email_settings', label: 'Email Settings', icon: 'fa-envelope-open-text', superAdminOnly: true },
 ];
 
 export default function AppShell({ children, title, subtitle, actions }) {
   const { user, role, loading, isAuthenticated, hasPermission, canViewAll, logout } = useAuth();
+  const isSuperAdmin = Boolean(user?.is_super_admin);
+
+  function canSeeAdminItem(item) {
+    if (item.superAdminOnly) return isSuperAdmin;
+    return hasPermission(item.slug);
+  }
   const { showToast } = useToast();
   const router = useRouter();
   const pathname = usePathname();
@@ -42,7 +51,7 @@ export default function AppShell({ children, title, subtitle, actions }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifs, setNotifs] = useState([]);
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const [clock, setClock] = useState('');
+  const [idleLabel, setIdleLabel] = useState('');
   const [theme, setTheme] = useState('dark');
 
   useEffect(() => {
@@ -56,28 +65,14 @@ export default function AppShell({ children, title, subtitle, actions }) {
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated || !user?.email) return;
-    startShift(user.email);
-    localStorage.setItem('integriti_last_user_email', JSON.stringify(user.email));
-
+    if (!isAuthenticated) return undefined;
     const id = setInterval(() => {
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const shiftLabel = formatShiftHours(getShiftElapsedMs(user.email));
-      setClock(`${timeStr} (Shift: ${shiftLabel})`);
+      const remaining = getIdleRemainingMs();
+      const limit = getSessionTimeoutMinutes();
+      setIdleLabel(`${formatIdleCountdown(remaining)} / ${limit}m`);
     }, 1000);
-
-    // Bank time if browser/tab is closing (session may still exist on reopen same day)
-    const onHide = () => pauseShift(user.email);
-    window.addEventListener('pagehide', onHide);
-    window.addEventListener('beforeunload', onHide);
-
-    return () => {
-      clearInterval(id);
-      window.removeEventListener('pagehide', onHide);
-      window.removeEventListener('beforeunload', onHide);
-    };
-  }, [isAuthenticated, user?.email]);
+    return () => clearInterval(id);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -85,8 +80,8 @@ export default function AppShell({ children, title, subtitle, actions }) {
   }, [isAuthenticated, pathname]);
 
   const adminVisible = useMemo(
-    () => ADMIN_ITEMS.some((i) => hasPermission(i.slug)),
-    [hasPermission]
+    () => ADMIN_ITEMS.some((i) => (i.superAdminOnly ? isSuperAdmin : hasPermission(i.slug))),
+    [hasPermission, isSuperAdmin]
   );
 
   function toggleTheme() {
@@ -112,10 +107,10 @@ export default function AppShell({ children, title, subtitle, actions }) {
     return <DataLoader variant="page" label="Loading portal…" />;
   }
 
+  // All Tickets for IT Admin / Executive / view_all. Line managers see reports via API list, not this label.
   const ticketsLabel =
     canViewAll('tickets') ||
     Boolean(role?.is_it_admin) ||
-    Boolean(role?.is_approver) ||
     Boolean(role?.is_executive)
       ? 'All Tickets'
       : 'My Tickets';
@@ -144,9 +139,12 @@ export default function AppShell({ children, title, subtitle, actions }) {
           <button className="header-icon-btn" onClick={() => router.push('/dashboard')} title="Home Dashboard">
             <i className="fa-solid fa-house" />
           </button>
-          <div className="live-clock-badge" title="Real-time Clock & Active Shift Elapsed Time">
-            <i className="fa-solid fa-clock-rotate-left" />
-            <span>{clock || '00:00:00'}</span>
+          <div
+            className="live-clock-badge"
+            title="Time left until inactivity logout. Resets when you use the app or call the API."
+          >
+            <i className="fa-solid fa-hourglass-half" />
+            <span>Idle: {idleLabel || '—'}</span>
           </div>
 
           <div className={`notif-dropdown-container ${notifOpen ? 'open' : ''}`}>
@@ -228,7 +226,7 @@ export default function AppShell({ children, title, subtitle, actions }) {
             {adminVisible ? (
               <>
                 <div className="sidebar-heading" style={{ marginTop: 14 }}>IT Admin Controls</div>
-                {ADMIN_ITEMS.filter((i) => hasPermission(i.slug)).map((item) => (
+                {ADMIN_ITEMS.filter((i) => canSeeAdminItem(i)).map((item) => (
                   <li key={item.href} className={`sidebar-item ${pathname === item.href ? 'active' : ''}`}>
                     <Link href={item.href} className="sidebar-nav-link" onClick={() => setSidebarOpen(false)}>
                       <i className={`fa-solid ${item.icon}`} />

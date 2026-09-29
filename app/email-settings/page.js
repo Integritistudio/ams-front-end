@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
-import { Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
+import { Pagination, EmptyState } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -39,6 +39,7 @@ const emptyForm = {
 
 export default function EmailSettingsPage() {
   const { hasPermission, user } = useAuth();
+  const isSuperAdmin = Boolean(user?.is_super_admin);
   const { showToast } = useToast();
   const [tab, setTab] = useState('smtp');
   const [rows, setRows] = useState([]);
@@ -108,15 +109,15 @@ export default function EmailSettingsPage() {
   }, [showToast, user?.email]);
 
   useEffect(() => {
-    if (!hasPermission('email_settings')) return;
+    if (!isSuperAdmin) return;
     load();
     loadSmtp();
-  }, [hasPermission, load, loadSmtp]);
+  }, [isSuperAdmin, load, loadSmtp]);
 
   useEffect(() => {
-    if (!hasPermission('email_settings')) return;
+    if (!isSuperAdmin) return;
     if (tab === 'triggers') loadTriggers();
-  }, [hasPermission, tab, loadTriggers]);
+  }, [isSuperAdmin, tab, loadTriggers]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -130,18 +131,6 @@ export default function EmailSettingsPage() {
   }, [rows, search]);
 
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  const exportPack = useMemo(() => ({
-    headers: ['Event', 'Category', 'Name', 'Use Custom', 'Status', 'Subject'],
-    rows: filtered.map((t) => [
-      t.event_key || '',
-      t.event_category || '',
-      t.name || '',
-      t.use_custom ? 'Yes' : 'No (system default)',
-      t.status || '',
-      t.subject || '',
-    ]),
-  }), [filtered]);
 
   const triggersByCategory = useMemo(() => {
     const map = {};
@@ -330,10 +319,10 @@ export default function EmailSettingsPage() {
     }
   }
 
-  if (!hasPermission('email_settings')) {
+  if (!isSuperAdmin) {
     return (
       <AppShell title="Email Settings" subtitle="SMTP, templates, and triggers.">
-        <AccessDenied moduleName="Email Settings" />
+        <AccessDenied moduleName="Email Settings (Super Admin only)" />
       </AppShell>
     );
   }
@@ -472,12 +461,6 @@ export default function EmailSettingsPage() {
                   onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 />
               </div>
-              <TableExportButtons
-                filename="email-templates"
-                title="Email Notification Templates"
-                headers={exportPack.headers}
-                rows={exportPack.rows}
-              />
             </div>
           </div>
 

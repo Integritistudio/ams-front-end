@@ -6,10 +6,12 @@ import AccessDenied from '../../components/AccessDenied';
 import Modal from '../../components/Modal';
 import { statusBadgeClass, roleBadgeClass, Pagination, EmptyState, TableExportButtons } from '../../components/uiHelpers';
 import DataLoader from '../../components/DataLoader';
+import DateRangeFilter from '../../components/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { usersApi, rolesApi, departmentsApi, uploadsApi } from '../../services/api';
 import UserAvatar, { fileToAvatarUploadFile } from '../../components/UserAvatar';
+import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
 
 const PAGE_SIZE = 10;
 
@@ -19,6 +21,7 @@ const emptyForm = {
   department: '',
   designation: '',
   manager: '',
+  manager_id: '',
   phone: '',
   status: 'Active',
   role_id: '',
@@ -46,11 +49,6 @@ const QUICK_ADD_META = {
     icon: 'fa-briefcase',
     label: 'Designation Title *',
   },
-  manager: {
-    title: 'Add New Line Manager',
-    icon: 'fa-user-tie',
-    label: 'Manager Name *',
-  },
 };
 
 export default function UsersPage() {
@@ -66,6 +64,7 @@ export default function UsersPage() {
   const [roleFilter, setRoleFilter] = useState('All');
   const [deptFilter, setDeptFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [dateRange, setDateRange] = useState(emptyDateRange);
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -141,10 +140,11 @@ export default function UsersPage() {
       if (deptFilter !== 'All' && (u.department || '') !== deptFilter) return false;
       // Status filter only on Active Users tab (Active / Suspended)
       if (listTab === 'current' && statusFilter !== 'All' && (u.status || '') !== statusFilter) return false;
+      if (!rowInDateRange(u, dateRange, ['created_at', 'createdAt', 'updated_at', 'updatedAt', 'deleted_at', 'deletedAt'])) return false;
       if (!q) return true;
       return [u.name, u.email, u.department, u.designation].join(' ').toLowerCase().includes(q);
     });
-  }, [rows, listTab, search, roleFilter, deptFilter, statusFilter, roles]);
+  }, [rows, listTab, search, roleFilter, deptFilter, statusFilter, dateRange, roles]);
 
   function switchListTab(next) {
     if (next === listTab) return;
@@ -157,18 +157,28 @@ export default function UsersPage() {
 
   const exportPack = useMemo(() => ({
     headers: ['User ID', 'Name', 'Email', 'Role', 'Department', 'Designation', 'Manager', 'Phone', 'Status'],
-    rows: filtered.map((u) => [
-      u.id,
-      u.name || '',
-      u.email || '',
-      u.role_name || u.roleName || roles.find((r) => Number(r.id) === Number(u.role_id))?.name || '',
-      u.department || '',
-      u.designation || '',
-      u.manager || '',
-      u.phone || '',
-      u.status || '',
-    ]),
-  }), [filtered, roles]);
+    rows: filtered.map((u) => {
+      const mgrName =
+        u.manager_name ||
+        u.managerName ||
+        (u.manager_id
+          ? rows.find((m) => Number(m.id) === Number(u.manager_id))?.name
+          : null) ||
+        u.manager ||
+        '';
+      return [
+        u.id,
+        u.name || '',
+        u.email || '',
+        u.role_name || u.roleName || roles.find((r) => Number(r.id) === Number(u.role_id))?.name || '',
+        u.department || '',
+        u.designation || '',
+        mgrName,
+        u.phone || '',
+        u.status || '',
+      ];
+    }),
+  }), [filtered, roles, rows]);
 
   const deptOptions = useMemo(() => {
     const fallback = [
@@ -182,7 +192,7 @@ export default function UsersPage() {
   }, [departments, form.department]);
 
   const fallbackRoles = useMemo(
-    () => roles.filter((r) => !r.is_it_admin && !r.is_approver),
+    () => roles.filter((r) => !r.is_it_admin),
     [roles]
   );
 
@@ -192,18 +202,24 @@ export default function UsersPage() {
       ...emptyForm,
       role_id: roles[0]?.id ? String(roles[0].id) : '',
       manager: '',
+      manager_id: '',
     });
     setOpen(true);
   }
 
   function openEdit(u) {
     setEditingId(u.id);
+    const mgrId = u.manager_id || u.managerId || '';
+    const mgrFromId = mgrId
+      ? rows.find((m) => Number(m.id) === Number(mgrId))
+      : null;
     setForm({
       name: u.name || '',
       email: u.email || '',
       department: u.department || '',
       designation: u.designation || '',
-      manager: u.manager || '',
+      manager: mgrFromId?.name || u.manager_name || u.managerName || u.manager || '',
+      manager_id: mgrId ? String(mgrId) : '',
       phone: u.phone || '',
       status: u.status || 'Active',
       role_id: String(u.role_id || u.roleId || ''),
@@ -211,6 +227,15 @@ export default function UsersPage() {
       avatar_url: u.avatar_url || '',
     });
     setOpen(true);
+  }
+
+  function setLineManager(managerId) {
+    const mgr = rows.find((m) => String(m.id) === String(managerId));
+    setForm((f) => ({
+      ...f,
+      manager_id: managerId,
+      manager: mgr?.name || '',
+    }));
   }
 
   async function onAvatarPick(e) {
@@ -259,9 +284,6 @@ export default function UsersPage() {
         setDesignations((prev) => [...new Set([...prev, val])].sort());
         setForm((f) => ({ ...f, designation: val }));
         showToast('Designation Added', `Designation set to "${val}".`, 'success');
-      } else if (quickType === 'manager') {
-        setForm((f) => ({ ...f, manager: val }));
-        showToast('Line Manager Added', `Line Manager set to "${val}".`, 'success');
       }
       setQuickOpen(false);
       setQuickType(null);
@@ -294,7 +316,8 @@ export default function UsersPage() {
         email: form.email,
         department: form.department,
         designation: form.designation,
-        manager: form.manager,
+        manager: form.manager || undefined,
+        manager_id: form.manager_id ? Number(form.manager_id) : null,
         phone: form.phone || undefined,
         status: form.status,
         role_id: roleId,
@@ -302,7 +325,7 @@ export default function UsersPage() {
       };
       if (form.password?.trim()) body.password = form.password.trim();
 
-      if (role && (role.is_it_admin || role.is_approver)) {
+      if (role && role.is_it_admin) {
         try {
           const previewRes = await usersApi.specialRoleTransferPreview({
             role_id: roleId,
@@ -340,7 +363,8 @@ export default function UsersPage() {
           email: form.email,
           department: form.department,
           designation: form.designation,
-          manager: form.manager,
+          manager: form.manager || undefined,
+          manager_id: form.manager_id ? Number(form.manager_id) : null,
           phone: form.phone || undefined,
           status: form.status,
           role_id: Number(form.role_id),
@@ -486,6 +510,7 @@ export default function UsersPage() {
     setRoleFilter('All');
     setDeptFilter('All');
     setStatusFilter('All');
+    setDateRange(emptyDateRange());
     setPage(1);
   }
 
@@ -569,6 +594,10 @@ export default function UsersPage() {
               <option value="Suspended">Suspended</option>
             </select>
           ) : null}
+          <DateRangeFilter
+            value={dateRange}
+            onChange={(next) => { setDateRange(next); setPage(1); }}
+          />
           <button type="button" className="btn btn-secondary btn-sm" onClick={clearFilters}>
             <i className="fa-solid fa-filter-circle-xmark" /> Clear
           </button>
@@ -621,6 +650,8 @@ export default function UsersPage() {
                       <button type="button" className="btn btn-success btn-sm" title="Restore user" onClick={() => restoreUser(u.id)}>
                         <i className="fa-solid fa-rotate-left" /><span> Restore</span>
                       </button>
+                    ) : u.is_super_admin ? (
+                      <span className="badge badge-info" title="Locked Super Admin account">Super Admin</span>
                     ) : (
                       <>
                         <button type="button" className="btn btn-secondary btn-sm" title="Edit" onClick={() => openEdit(u)}>
@@ -755,23 +786,7 @@ export default function UsersPage() {
                 value={form.role_id}
                 onChange={(e) => {
                   const roleId = e.target.value;
-                  const role = roles.find((r) => String(r.id) === String(roleId));
                   setForm((f) => ({ ...f, role_id: roleId }));
-                  if (role && (role.is_it_admin || role.is_approver)) {
-                    const occupied = rows.filter(
-                      (u) =>
-                        (u.status || '') !== 'Deleted' &&
-                        Number(u.role_id || u.roleId) === Number(roleId) &&
-                        Number(u.id) !== Number(editingId)
-                    );
-                    if (occupied.length >= 1) {
-                      showToast(
-                        'Transfer required',
-                        `${role.is_it_admin ? 'IT Admin' : 'Approver'} is currently ${occupied[0].name}. Saving will ask you to confirm moving pending work to this person.`,
-                        'info'
-                      );
-                    }
-                  }
                 }}
               >
                 <option value="">Select role</option>
@@ -822,31 +837,24 @@ export default function UsersPage() {
 
           <div className="form-grid-2">
             <div className="form-group">
-              <div style={labelRowStyle}>
-                <label style={{ marginBottom: 0 }}>Line Manager</label>
-                <button
-                  type="button"
-                  className="btn-ai btn-sm"
-                  style={{ height: 22, fontSize: 10.5, padding: '0 6px' }}
-                  onClick={() => openQuickAdd('manager')}
-                >
-                  <i className="fa-solid fa-plus" /> Add New
-                </button>
-              </div>
-              <input
-                className="form-control"
-                list="userManagerList"
-                placeholder="e.g. Ahmer Arsalan"
-                value={form.manager}
-                onChange={(e) => setForm((f) => ({ ...f, manager: e.target.value }))}
-              />
-              <datalist id="userManagerList">
+              <label>Line Manager</label>
+              <select
+                className="form-control form-control-select"
+                value={form.manager_id}
+                onChange={(e) => setLineManager(e.target.value)}
+              >
+                <option value="">No line manager</option>
                 {rows
                   .filter((u) => (u.status || '') === 'Active' && Number(u.id) !== Number(editingId))
                   .map((u) => (
-                    <option key={u.id} value={u.name}>{u.email}</option>
+                    <option key={u.id} value={u.id}>
+                      {u.name} ({u.email})
+                    </option>
                   ))}
-              </datalist>
+              </select>
+              <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                Tickets and asset requests route to this manager for first approval.
+              </p>
             </div>
             <div className="form-group">
               <div style={labelRowStyle}>
