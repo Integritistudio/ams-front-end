@@ -44,6 +44,14 @@ function workflowAction(r) {
   return r?.workflow?.can_act ? r.workflow.action : null;
 }
 
+/** Line Manager queue membership, independent of the API's workflow field. */
+function isLineManagerQueueRow(r, userId) {
+  if (!r || !userId) return false;
+  const status = r.status || '';
+  if (status !== 'Pending Line Manager Approval' && status !== 'Pending Manager Approval') return false;
+  return Number(r.line_manager_id ?? r.lineManagerId) === Number(userId);
+}
+
 function fmtAmount(value) {
   if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
@@ -165,7 +173,7 @@ export default function ApprovalsPage() {
       } else {
         // Oversight roles see the whole queue; everyone else sees what they must act on + their own.
         const oversees = isItAdmin || isExecutive || isSuperAdmin;
-        if (!oversees && !isMine && !workflowAction(r)) return false;
+        if (!oversees && !isMine && !workflowAction(r) && !isLineManagerQueueRow(r, user?.id)) return false;
       }
       if (!rowInDateRange(r, dateRange)) return false;
       if (!q) return true;
@@ -173,7 +181,7 @@ export default function ApprovalsPage() {
       return hay.includes(q);
     });
   }, [
-    rows, search, dateRange, mineOnly, user?.email, seesItQueueOnPending, isItAdmin, isExecutive, isSuperAdmin,
+    rows, search, dateRange, mineOnly, user?.email, user?.id, seesItQueueOnPending, isItAdmin, isExecutive, isSuperAdmin,
   ]);
 
   const pageRows = pending.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
