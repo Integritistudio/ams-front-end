@@ -25,19 +25,30 @@ const IT_QUEUE_STATUSES = [
   'On Hold',
 ];
 
-const SIGNER_PENDING = [
+const ALL_PENDING = [
   'Pending Line Manager Approval',
   'Pending Manager Approval',
-  'Pending Finance Approval',
+  'Pending IT Inventory Check',
+  'Pending IT Pricing',
   'Pending HR Approval',
+  'Pending Price Approval',
+  'Pending Finance Processing',
+  // Legacy stages
+  'Pending Finance Approval',
   'Pending GM Approval',
   'Pending Executive Approval',
 ];
 
-const ALL_PENDING = [
-  ...SIGNER_PENDING,
-  'Pending IT Pricing',
-];
+/** Stage action the signed-in user can take on this row — computed by the API. */
+function workflowAction(r) {
+  return r?.workflow?.can_act ? r.workflow.action : null;
+}
+
+function fmtAmount(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString() : String(value);
+}
 
 function pid(r) {
   return r?.public_id || r?.publicId || r?.id;
@@ -91,6 +102,8 @@ export default function ApprovalsPage() {
   const [holdReason, setHoldReason] = useState('');
   const [totalPrice, setTotalPrice] = useState('');
   const [vendorQuotes, setVendorQuotes] = useState('');
+  const [stageNote, setStageNote] = useState('');
+  const [finance, setFinance] = useState({ quote_amount: '', vendor: '', invoice_ref: '', payment_ref: '' });
 
   const isItAdmin = Boolean(role?.is_it_admin);
   const isHrManager = Boolean(role?.is_hr_manager);
@@ -115,33 +128,6 @@ export default function ApprovalsPage() {
   const seesItQueueOnPending =
     isItAdmin ||
     (!isExecutive && !isHrManager && !isFinanceManager && !isGm);
-
-  function canActOnStatus(status) {
-    const s = status || '';
-    if (s === 'Pending Line Manager Approval' || s === 'Pending Manager Approval') {
-      return true; // further gated by line_manager_id match
-    }
-    if (s === 'Pending Finance Approval') return isFinanceManager;
-    if (s === 'Pending HR Approval') return isHrManager;
-    if (s === 'Pending GM Approval') return isGm || isExecutive;
-    if (s === 'Pending Executive Approval') return isExecutive;
-    return false;
-  }
-
-  function isLineManagerFor(r) {
-    if (!r || !user?.id) return false;
-    const lmId = r.line_manager_id ?? r.lineManagerId ?? r.approver_id ?? r.approverId;
-    return Number(lmId) === Number(user.id);
-  }
-
-  function canUserApprove(r) {
-    if (!r) return false;
-    const status = r.status || '';
-    if (status === 'Pending Line Manager Approval' || status === 'Pending Manager Approval') {
-      return isLineManagerFor(r);
-    }
-    return canActOnStatus(status);
-  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -172,41 +158,14 @@ export default function ApprovalsPage() {
         return false;
       }
 
-      // Client-side stage filter: show items relevant to this actor when API returns a broad list
-      if (canSeeAllPending && !mineOnly) {
-        const relevant =
-          isItAdmin ||
-          canUserApprove(r) ||
-          (status === 'Pending IT Pricing' && isItAdmin) ||
-          isPendingStage(status); // keep visible for executives / managers reviewing queue
-        if (!relevant && !isExecutive && !isItAdmin) {
-          // Stage-specific managers: only their stage (+ any LM items for them)
-          if (isFinanceManager && status !== 'Pending Finance Approval') return false;
-          if (isHrManager && status !== 'Pending HR Approval') return false;
-          if (isGm && status !== 'Pending GM Approval' && status !== 'Pending Executive Approval') return false;
-        }
-        if (isFinanceManager && !isItAdmin && !isExecutive && !isHrManager && !isGm) {
-          if (status !== 'Pending Finance Approval' && !(isLineManagerFor(r) && (status === 'Pending Line Manager Approval' || status === 'Pending Manager Approval'))) {
-            return false;
-          }
-        }
-        if (isHrManager && !isItAdmin && !isExecutive && !isFinanceManager && !isGm) {
-          if (status !== 'Pending HR Approval' && !(isLineManagerFor(r) && (status === 'Pending Line Manager Approval' || status === 'Pending Manager Approval'))) {
-            return false;
-          }
-        }
-        if (isGm && !isItAdmin && !isExecutive && !isFinanceManager && !isHrManager) {
-          if (status !== 'Pending GM Approval' && !(isLineManagerFor(r) && (status === 'Pending Line Manager Approval' || status === 'Pending Manager Approval'))) {
-            return false;
-          }
-        }
-      }
-
       const requesterEmail = (r.requester_email || r.requesterEmail || '').toLowerCase();
-      if (!canSeeAllPending) {
-        if (!myEmail || requesterEmail !== myEmail) return false;
-      } else if (mineOnly) {
-        if (!myEmail || requesterEmail !== myEmail) return false;
+      const isMine = Boolean(myEmail) && requesterEmail === myEmail;
+      if (mineOnly) {
+        if (!isMine) return false;
+      } else {
+        // Oversight roles see the whole queue; everyone else sees what they must act on + their own.
+        const oversees = isItAdmin || isExecutive || isSuperAdmin;
+        if (!oversees && !isMine && !workflowAction(r)) return false;
       }
       if (!rowInDateRange(r, dateRange)) return false;
       if (!q) return true;
@@ -214,8 +173,7 @@ export default function ApprovalsPage() {
       return hay.includes(q);
     });
   }, [
-    rows, search, dateRange, canSeeAllPending, mineOnly, user?.email, user?.id,
-    seesItQueueOnPending, isItAdmin, isExecutive, isFinanceManager, isHrManager, isGm,
+    rows, search, dateRange, mineOnly, user?.email, seesItQueueOnPending, isItAdmin, isExecutive, isSuperAdmin,
   ]);
 
   const pageRows = pending.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -236,15 +194,21 @@ export default function ApprovalsPage() {
         r.status || '',
       ];
       if (canSeeInventoryFlag) base.push(inventorySourceLabel(r));
-      base.push(r.line_manager_name || r.lineManagerName || r.approver_name || r.approverName || '');
+      base.push(r.line_manager_name || r.lineManagerName || '');
       return base;
     }),
   }), [pending, canSeeInventoryFlag]);
 
   const detailStatus = detail?.status || '';
   const detailStatusLower = detailStatus.toLowerCase();
-  const canActOnDetail = Boolean(detail && canUserApprove(detail) && isPendingStage(detailStatus) && detailStatus !== 'Pending IT Pricing');
-  const canSubmitPricing = Boolean(detail && isItAdmin && detailStatus === 'Pending IT Pricing');
+  const detailAction = workflowAction(detail);
+  const canActOnDetail = detailAction === 'approve';
+  const canRejectDetail = Boolean(detail?.workflow?.can_act && detail?.workflow?.can_reject);
+  const canCheckInventory = detailAction === 'inventory_check';
+  const canSubmitPricing = detailAction === 'pricing';
+  const canFinanceProcess = detailAction === 'finance_process';
+  const hasStageAction =
+    canActOnDetail || canRejectDetail || canCheckInventory || canSubmitPricing || canFinanceProcess;
   const canItActOnDetail = Boolean(
     detail &&
     isItAdmin &&
@@ -259,6 +223,13 @@ export default function ApprovalsPage() {
       const data = res.data;
       setDetail(data);
       setReplyText('');
+      setStageNote('');
+      setFinance({
+        quote_amount: data?.approved_amount != null ? String(data.approved_amount) : '',
+        vendor: '',
+        invoice_ref: '',
+        payment_ref: '',
+      });
       setTotalPrice(data?.total_price != null ? String(data.total_price) : '');
       const quotes = data?.vendor_quotes ?? data?.vendorQuotes;
       setVendorQuotes(
@@ -276,7 +247,7 @@ export default function ApprovalsPage() {
 
   async function act(action) {
     if (!detail) return;
-    if (!canUserApprove(detail)) {
+    if (action === 'approve' ? !canActOnDetail : !canRejectDetail) {
       showToast('Not allowed', 'You are not the current stage approver for this request.', 'warning');
       return;
     }
@@ -284,7 +255,7 @@ export default function ApprovalsPage() {
     try {
       const id = pid(detail);
       if (action === 'approve') await requisitionsApi.approve(id);
-      if (action === 'reject') await requisitionsApi.reject(id);
+      if (action === 'reject') await requisitionsApi.reject(id, stageNote.trim() || undefined);
       showToast(
         action === 'approve' ? 'Approved' : 'Rejected',
         action === 'approve'
@@ -304,8 +275,8 @@ export default function ApprovalsPage() {
   async function submitPricing() {
     if (!detail || !canSubmitPricing) return;
     const price = Number(totalPrice);
-    if (!Number.isFinite(price) || price < 0) {
-      showToast('Required', 'Enter a valid total price.', 'warning');
+    if (!Number.isFinite(price) || price <= 0) {
+      showToast('Required', 'Enter a valid initial price.', 'warning');
       return;
     }
     setBusy(true);
@@ -322,11 +293,72 @@ export default function ApprovalsPage() {
         total_price: price,
         vendor_quotes: quotesPayload || null,
       });
-      showToast('Pricing Submitted', 'Pricing saved and request advanced for financial approval.', 'success');
+      showToast('Price Submitted', 'Initial price saved and routed for approval by amount.', 'success');
       setOpen(false);
       await load();
     } catch (err) {
       showToast('Error', err.message || 'Could not submit pricing', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitInventoryCheck(available) {
+    if (!detail || !canCheckInventory) return;
+    setBusy(true);
+    try {
+      const res = await requisitionsApi.inventoryCheck(pid(detail), {
+        available,
+        note: stageNote.trim() || undefined,
+      });
+      showToast(
+        'Inventory Confirmed',
+        available
+          ? `In stock — request is now "${res.data?.status}".`
+          : 'Not in stock — submit the initial price to start procurement.',
+        'success'
+      );
+      if (available) {
+        setOpen(false);
+      } else {
+        await openDetail(pid(detail));
+      }
+      await load();
+    } catch (err) {
+      showToast('Error', err.message || 'Could not confirm inventory', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitFinance() {
+    if (!detail || !canFinanceProcess) return;
+    const quote = Number(finance.quote_amount);
+    if (!Number.isFinite(quote) || quote <= 0) {
+      showToast('Required', 'Enter the vendor quotation amount.', 'warning');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await requisitionsApi.financeProcess(pid(detail), {
+        quote_amount: quote,
+        vendor: finance.vendor.trim() || undefined,
+        invoice_ref: finance.invoice_ref.trim() || undefined,
+        payment_ref: finance.payment_ref.trim() || undefined,
+        notes: stageNote.trim() || undefined,
+      });
+      const reapproval = res.data?.status !== 'Approved - Sent to IT';
+      showToast(
+        reapproval ? 'Re-approval Required' : 'Payment Recorded',
+        reapproval
+          ? `Quotation exceeds the approved price — request is now "${res.data?.status}".`
+          : 'Quotation and payment recorded. Sent to IT for delivery.',
+        reapproval ? 'warning' : 'success'
+      );
+      setOpen(false);
+      await load();
+    } catch (err) {
+      showToast('Error', err.message || 'Could not record finance processing', 'error');
     } finally {
       setBusy(false);
     }
@@ -387,18 +419,20 @@ export default function ApprovalsPage() {
 
   const sla = detail ? slaInfo(detail) : null;
   const approveLabel =
-    detailStatus === 'Pending Line Manager Approval' || detailStatus === 'Pending Manager Approval'
-      ? 'Approve (Next Stage)'
-      : 'Approve';
+    detail?.workflow?.stage === 'price_approval'
+      ? `Approve Price (${fmtAmount(detail.total_price)})`
+      : detail?.workflow?.stage === 'line_manager'
+        ? 'Approve (Next Stage)'
+        : 'Approve';
 
   return (
     <AppShell
       title="Pending Approvals"
       subtitle={
         isItAdmin
-          ? 'Line-manager queue, IT pricing, and fulfilment actions for approved requests.'
+          ? 'Inventory checks, initial pricing, and fulfilment actions for approved requests.'
           : canSeeAllPending
-            ? 'Review requests pending at your approval stage (Line Manager / Finance / HR / GM / Executive).'
+            ? 'Review requests waiting on you (Line Manager / HR / price approval / Finance processing).'
             : 'Track your asset requests while they await approval or IT action.'
       }
     >
@@ -498,7 +532,7 @@ export default function ApprovalsPage() {
                     {isExecutivePriority(r) ? (
                       <>
                         {' '}
-                        <span className="badge badge-sla-warning" title="Executive Priority — auto-approved to IT">
+                        <span className="badge badge-sla-warning" title="Executive request — Line Manager and price approval skipped">
                           Executive Priority
                         </span>
                       </>
@@ -529,15 +563,30 @@ export default function ApprovalsPage() {
         footer={(
           <>
             <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Close</button>
+            {canRejectDetail ? (
+              <button type="button" className="btn btn-danger" disabled={busy} onClick={() => act('reject')}>
+                <i className="fa-solid fa-xmark" /><span>Reject</span>
+              </button>
+            ) : null}
             {canActOnDetail ? (
+              <button type="button" className="btn btn-success" disabled={busy} onClick={() => act('approve')}>
+                <i className="fa-solid fa-check" /><span>{approveLabel}</span>
+              </button>
+            ) : null}
+            {canCheckInventory ? (
               <>
-                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => act('reject')}>
-                  <i className="fa-solid fa-xmark" /><span>Reject</span>
+                <button type="button" className="btn btn-warning" disabled={busy} onClick={() => submitInventoryCheck(false)}>
+                  <i className="fa-solid fa-cart-shopping" /><span>Not In Stock</span>
                 </button>
-                <button type="button" className="btn btn-success" disabled={busy} onClick={() => act('approve')}>
-                  <i className="fa-solid fa-check" /><span>{approveLabel}</span>
+                <button type="button" className="btn btn-success" disabled={busy} onClick={() => submitInventoryCheck(true)}>
+                  <i className="fa-solid fa-boxes-stacked" /><span>In Stock</span>
                 </button>
               </>
+            ) : null}
+            {canFinanceProcess ? (
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={submitFinance}>
+                <i className="fa-solid fa-file-invoice-dollar" /><span>{busy ? 'Saving...' : 'Record Quotation & Payment'}</span>
+              </button>
             ) : null}
             {canSubmitPricing ? (
               <button type="button" className="btn btn-primary" disabled={busy} onClick={submitPricing}>
@@ -565,9 +614,9 @@ export default function ApprovalsPage() {
                 </button>
               </>
             ) : null}
-            {detail && isPendingStage(detailStatus) && !canActOnDetail && !canSubmitPricing ? (
+            {detail && isPendingStage(detailStatus) && !hasStageAction ? (
               <span style={{ fontSize: 13, color: 'var(--text-muted)', alignSelf: 'center' }}>
-                View only — awaiting the current stage approver
+                View only — awaiting {detail.approval_tier_role_name || 'the current stage approver'}
               </span>
             ) : null}
           </>
@@ -634,7 +683,7 @@ export default function ApprovalsPage() {
                       ? 'Available in Inventory — prefer assigning from stock (no vendor purchase needed).'
                       : detail.inventory_available === false || detail.inventoryAvailable === false
                         ? 'Need Purchase — item not in stock; IT pricing / procurement path applies.'
-                        : 'Inventory check pending — set automatically after Line Manager approval.'}
+                        : 'Inventory check pending — IT Admin confirms stock after Line Manager approval.'}
                   </div>
                 </div>
               </div>
@@ -652,7 +701,7 @@ export default function ApprovalsPage() {
                 <div>
                   <strong>Executive Priority:</strong>
                   <div style={{ marginTop: 2 }}>
-                    Line Manager approval was skipped. This request was auto-approved by an Executive.
+                    Executive request — Line Manager approval skipped and price approval is automatic.
                   </div>
                 </div>
               </div>
@@ -668,17 +717,94 @@ export default function ApprovalsPage() {
               </div>
             ) : null}
 
+            {canCheckInventory ? (
+              <div className="admin-ticket-action-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
+                <div className="admin-action-info">
+                  <i className="fa-solid fa-boxes-stacked" /><span>IT Inventory Check:</span>
+                </div>
+                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  Confirm whether &quot;{detail.item}&quot; is available in inventory. In stock goes to HR approval
+                  (or straight to delivery when HR approval does not apply); not in stock starts procurement.
+                </span>
+              </div>
+            ) : null}
+
+            {canFinanceProcess ? (
+              <div className="admin-ticket-action-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
+                <div className="admin-action-info">
+                  <i className="fa-solid fa-file-invoice-dollar" />
+                  <span>Finance Processing — approved price {fmtAmount(detail.approved_amount)}:</span>
+                </div>
+                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  A vendor quotation above the approved price is sent back for re-approval at the new amount.
+                </span>
+                <div className="form-grid-2" style={{ width: '100%' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Vendor Quotation Amount *</label>
+                    <input
+                      type="number"
+                      className="form-control"
+                      min={0}
+                      step="0.01"
+                      value={finance.quote_amount}
+                      onChange={(e) => setFinance((f) => ({ ...f, quote_amount: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Vendor</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={finance.vendor}
+                      onChange={(e) => setFinance((f) => ({ ...f, vendor: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Invoice Reference</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={finance.invoice_ref}
+                      onChange={(e) => setFinance((f) => ({ ...f, invoice_ref: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Payment Reference</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={finance.payment_ref}
+                      onChange={(e) => setFinance((f) => ({ ...f, payment_ref: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {canCheckInventory || canRejectDetail || canFinanceProcess ? (
+              <div className="form-group">
+                <label>{canRejectDetail ? 'Note / rejection reason' : 'Note'}</label>
+                <textarea
+                  className="form-control"
+                  rows={2}
+                  value={stageNote}
+                  onChange={(e) => setStageNote(e.target.value)}
+                  placeholder="Optional — recorded in the request history"
+                />
+              </div>
+            ) : null}
+
             {canSubmitPricing ? (
               <div
                 className="admin-ticket-action-bar"
                 style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}
               >
                 <div className="admin-action-info">
-                  <i className="fa-solid fa-tags" /><span>IT Pricing (required to advance):</span>
+                  <i className="fa-solid fa-tags" /><span>Initial Price (routed to HR / GM / Executive by amount):</span>
                 </div>
                 <div className="form-grid-2" style={{ width: '100%' }}>
                   <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Total Price *</label>
+                    <label>Initial Price *</label>
                     <input
                       type="number"
                       className="form-control"
@@ -728,7 +854,7 @@ export default function ApprovalsPage() {
               <div className="summary-item">
                 <span className="label">Line Manager</span>
                 <span className="val">
-                  {detail.line_manager_name || detail.lineManagerName || detail.approver_name || detail.approverName || '—'}
+                  {detail.line_manager_name || detail.lineManagerName || '—'}
                 </span>
               </div>
               <div className="summary-item">
@@ -745,8 +871,20 @@ export default function ApprovalsPage() {
               </div>
               {detail.total_price != null || detail.totalPrice != null ? (
                 <div className="summary-item">
-                  <span className="label">Total Price</span>
-                  <span className="val">{detail.total_price ?? detail.totalPrice}</span>
+                  <span className="label">Price</span>
+                  <span className="val">{fmtAmount(detail.total_price ?? detail.totalPrice)}</span>
+                </div>
+              ) : null}
+              {detail.approved_amount != null ? (
+                <div className="summary-item">
+                  <span className="label">Approved Amount</span>
+                  <span className="val">{fmtAmount(detail.approved_amount)}</span>
+                </div>
+              ) : null}
+              {detail.approver_name ? (
+                <div className="summary-item">
+                  <span className="label">Current / Last Approver</span>
+                  <span className="val">{detail.approver_name}</span>
                 </div>
               ) : null}
             </div>

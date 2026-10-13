@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import AppShell from '../../components/AppShell';
 import DataLoader from '../../components/DataLoader';
+import ApprovalTiersEditor from '../../components/ApprovalTiersEditor';
 import AccessDenied from '../../components/AccessDenied';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -19,8 +20,6 @@ import {
 
 const DEFAULTS = {
   ...PORTAL_APPEARANCE_DEFAULTS,
-  hr_approval_limit: 50000,
-  gm_approval_limit: 200000,
   session_timeout_minutes: SESSION_TIMEOUT_DEFAULT_MINUTES,
 };
 
@@ -64,8 +63,6 @@ export default function SettingsPage() {
         const next = {
           color_primary: data.color_primary || DEFAULTS.color_primary,
           color_accent: data.color_accent || DEFAULTS.color_accent,
-          hr_approval_limit: Number(data.hr_approval_limit ?? DEFAULTS.hr_approval_limit),
-          gm_approval_limit: Number(data.gm_approval_limit ?? DEFAULTS.gm_approval_limit),
           session_timeout_minutes: Number(
             data.session_timeout_minutes ?? DEFAULTS.session_timeout_minutes
           ),
@@ -97,8 +94,6 @@ export default function SettingsPage() {
       const payload = {
         color_primary: form.color_primary,
         color_accent: form.color_accent,
-        hr_approval_limit: Number(form.hr_approval_limit),
-        gm_approval_limit: Number(form.gm_approval_limit),
         session_timeout_minutes: Number(form.session_timeout_minutes),
       };
       await settingsApi.update(payload);
@@ -135,7 +130,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <AppShell title="Settings" subtitle="Portal appearance, session timeout & AI settings.">
+    <AppShell title="Settings" subtitle="Portal appearance, session timeout, approval tiers & AI settings.">
       <div className="account-card-grid" style={{ gridTemplateColumns: '1fr' }}>
         <div className="account-main-box">
           <div className="account-section-heading">
@@ -196,43 +191,6 @@ export default function SettingsPage() {
               </div>
 
               <div className="account-section-heading" style={{ marginTop: 8 }}>
-                <i className="fa-solid fa-scale-balanced" /><span>Approval Thresholds</span>
-              </div>
-              <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 14px', lineHeight: 1.45 }}>
-                Used by the asset request workflow after IT pricing — amounts at or below each limit stay with that stage; higher amounts escalate.
-              </p>
-              <div className="form-grid-2">
-                <div className="form-group">
-                  <label>HR Approval Limit</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={0}
-                    step={1}
-                    value={form.hr_approval_limit ?? ''}
-                    onChange={(e) => setForm((f) => ({
-                      ...f,
-                      hr_approval_limit: e.target.value === '' ? '' : Number(e.target.value),
-                    }))}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>GM Approval Limit</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={0}
-                    step={1}
-                    value={form.gm_approval_limit ?? ''}
-                    onChange={(e) => setForm((f) => ({
-                      ...f,
-                      gm_approval_limit: e.target.value === '' ? '' : Number(e.target.value),
-                    }))}
-                  />
-                </div>
-              </div>
-
-              <div className="account-section-heading" style={{ marginTop: 8 }}>
                 <i className="fa-solid fa-clock" /><span>Session Timeout</span>
               </div>
               <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 14px', lineHeight: 1.45 }}>
@@ -264,6 +222,13 @@ export default function SettingsPage() {
               </div>
             </form>
           )}
+        </div>
+
+        <div className="account-main-box" style={{ marginTop: 20 }}>
+          <div className="account-section-heading">
+            <i className="fa-solid fa-scale-balanced" /><span>Asset Request Approval Tiers</span>
+          </div>
+          <ApprovalTiersEditor />
         </div>
 
         <div className="account-main-box" style={{ marginTop: 20 }}>

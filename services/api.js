@@ -143,14 +143,25 @@ export const requisitionsApi = {
   get: (id) => api(`/api/requisitions/${id}`),
   create: (body) => api('/api/requisitions', { method: 'POST', body }),
   approve: (id) => api(`/api/requisitions/${id}/approve`, { method: 'PATCH' }),
-  reject: (id) => api(`/api/requisitions/${id}/reject`, { method: 'PATCH' }),
+  reject: (id, reason) =>
+    api(`/api/requisitions/${id}/reject`, { method: 'PATCH', body: reason ? { reason } : undefined }),
+  inventoryCheck: (id, body) =>
+    api(`/api/requisitions/${id}/inventory-check`, { method: 'PATCH', body }),
   submitPricing: (id, body) =>
     api(`/api/requisitions/${id}/submit-pricing`, { method: 'PATCH', body }),
+  financeProcess: (id, body) =>
+    api(`/api/requisitions/${id}/finance-process`, { method: 'PATCH', body }),
   hold: (id, holdReason) => api(`/api/requisitions/${id}/hold`, { method: 'PATCH', body: { reason: holdReason, hold_reason: holdReason } }),
   inProgress: (id) => api(`/api/requisitions/${id}/in-progress`, { method: 'PATCH' }),
   resume: (id) => api(`/api/requisitions/${id}/resume`, { method: 'PATCH' }),
   complete: (id, note) => api(`/api/requisitions/${id}/complete`, { method: 'PATCH', body: { note: note || 'Asset request marked completed' } }),
   reply: (id, text) => api(`/api/requisitions/${id}/reply`, { method: 'POST', body: { text } }),
+};
+export const approvalTiersApi = {
+  list: () => api('/api/approval-tiers'),
+  create: (body) => api('/api/approval-tiers', { method: 'POST', body }),
+  update: (id, body) => api(`/api/approval-tiers/${id}`, { method: 'PUT', body }),
+  remove: (id) => api(`/api/approval-tiers/${id}`, { method: 'DELETE' }),
 };
 export const inventoryApi = {
   list: (params = {}) => {

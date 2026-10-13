@@ -39,9 +39,13 @@ const emptyForm = {
 const PENDING_STATUSES = [
   'Pending Line Manager Approval',
   'Pending Manager Approval',
+  'Pending IT Inventory Check',
   'Pending IT Pricing',
-  'Pending Finance Approval',
   'Pending HR Approval',
+  'Pending Price Approval',
+  'Pending Finance Processing',
+  // Legacy stages
+  'Pending Finance Approval',
   'Pending GM Approval',
   'Pending Executive Approval',
 ];
@@ -84,8 +88,9 @@ function RequisitionsPageInner() {
       !Boolean(role?.is_finance_manager) &&
       !Boolean(role?.is_gm));
   const isItOverride = canViewAll('requisitions') || Boolean(role?.is_it_admin);
-  const isExecutiveCreator =
-    isExecutiveViewer && !Boolean(role?.is_it_admin);
+  // GM / Executive requests skip Line Manager; so do requests from users without a Line Manager.
+  const skipsLineManager = Boolean(role?.is_gm || role?.is_executive);
+  const goesStraightToIt = skipsLineManager || (!user?.manager_id && !user?.manager);
 
   const lineManagerLabel = user?.manager || 'your Line Manager';
 
@@ -293,7 +298,7 @@ function RequisitionsPageInner() {
         const up = await uploadsApi.upload(attachFile);
         attachment_url = up.data?.url || null;
       }
-      await requisitionsApi.create({
+      const created = await requisitionsApi.create({
         type: form.type,
         item,
         project: form.project.trim(),
@@ -307,9 +312,9 @@ function RequisitionsPageInner() {
       });
       showToast(
         'Submitted',
-        isExecutiveCreator
-          ? 'Executive Priority request auto-approved and sent to IT Admin.'
-          : `Request sent to ${lineManagerLabel} for Line Manager approval.`,
+        created?.data?.status === 'Pending IT Inventory Check'
+          ? 'Request sent to IT Admin for an inventory check.'
+          : `Request sent to ${created?.data?.line_manager_name || lineManagerLabel} for Line Manager approval.`,
         'success'
       );
       setCreateOpen(false);
@@ -428,12 +433,9 @@ function RequisitionsPageInner() {
               <option value="All">All Statuses</option>
               {isExecutiveViewer ? (
                 <>
-                  <option value="Pending Line Manager Approval">Pending Line Manager Approval</option>
-                  <option value="Pending IT Pricing">Pending IT Pricing</option>
-                  <option value="Pending Finance Approval">Pending Finance Approval</option>
-                  <option value="Pending HR Approval">Pending HR Approval</option>
-                  <option value="Pending GM Approval">Pending GM Approval</option>
-                  <option value="Pending Executive Approval">Pending Executive Approval</option>
+                  {PENDING_STATUSES.filter((s) => s !== 'Pending Manager Approval').map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
                 </>
               ) : null}
               {!hideItQueueOnAssetRequests ? (
@@ -596,8 +598,8 @@ function RequisitionsPageInner() {
           <div className="form-grid-2">
             <div className="form-group">
               <label>Approval Routing</label>
-              {isExecutiveCreator ? (
-                <input className="form-control" readOnly value="Auto-approved → Sent to IT Admin" />
+              {goesStraightToIt ? (
+                <input className="form-control" readOnly value="Sent directly to IT Admin for inventory check" />
               ) : (
                 <input
                   className="form-control"
@@ -624,22 +626,16 @@ function RequisitionsPageInner() {
             </div>
           </div>
 
-          {isExecutiveCreator ? (
-            <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-              <i className="fa-solid fa-circle-info" style={{ marginRight: 6, color: 'var(--warning)' }} />
-              Executive Priority: Line Manager approval is skipped. This request goes directly to IT Admin.
-            </p>
-          ) : !user?.manager_id && !user?.manager ? (
-            <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: 'var(--warning)', lineHeight: 1.45 }}>
-              <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }} />
-              No Line Manager is assigned on your profile. Ask an admin to set your manager before submitting.
-            </p>
-          ) : (
-            <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-              <i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />
-              Starts as <strong>Pending Line Manager Approval</strong>, then IT pricing and Finance / HR / GM / Executive as needed.
-            </p>
-          )}
+          <p style={{ margin: '-6px 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+            <i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />
+            {skipsLineManager
+              ? 'Line Manager approval is skipped for your role. '
+              : goesStraightToIt
+                ? 'No Line Manager is assigned on your profile, so Line Manager approval is skipped. '
+                : 'Starts with Line Manager approval. '}
+            IT Admin then checks inventory: in-stock items go to HR approval (where applicable) and delivery;
+            items to purchase are priced, approved by amount (HR / GM / Executive), paid by Finance and delivered by IT.
+          </p>
 
           <div className="sla-live-preview-box">
             <i className="fa-solid fa-truck-ramp-box" />

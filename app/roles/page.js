@@ -387,7 +387,7 @@ export default function RolesPage() {
                   checked={Boolean(form.is_executive)}
                   onChange={(e) => setForm((f) => ({ ...f, is_executive: e.target.checked }))}
                 />
-                <span><strong>Executive</strong> — view all; can approve at Pending GM / Executive</span>
+                <span><strong>Executive</strong> — view all; skips Line Manager; price approvals per Settings → Approval Tiers</span>
               </label>
             </div>
           </div>

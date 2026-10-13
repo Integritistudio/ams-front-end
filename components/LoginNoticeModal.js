@@ -96,13 +96,8 @@ export default function LoginNoticeModal() {
           nextAction = hasPermission('approvals') ? '/approvals' : '/tickets';
           nextActionLabel = hasPermission('approvals') ? 'View Action Desk' : 'Continue to Portal';
         } else if (hasPermission('approvals')) {
-          const pendingApprovals = reqs.filter((r) => {
-            if (!isPendingReq(r)) return false;
-            const lmId = r.line_manager_id ?? r.lineManagerId ?? r.approver_id ?? r.approverId;
-            if (lmId && user.id && Number(lmId) === Number(user.id)) return true;
-            return (r.approver_email || '').toLowerCase() === email
-              || (r.line_manager_email || '').toLowerCase() === email;
-          });
+          // The API marks rows the signed-in user can act on at the current stage.
+          const pendingApprovals = reqs.filter((r) => isPendingReq(r) && Boolean(r.workflow?.can_act));
           nextItems.push({
             tag: 'Approval Queue',
             icon: 'fa-stamp',

@@ -82,18 +82,9 @@ function isDirectReportRow(row, user, directoryByEmail) {
   return Boolean(person && Number(person.manager_id || person.managerId) === Number(user.id));
 }
 
-function canApproveReq(row, user, role) {
-  if (!row || !user) return false;
-  const status = row.status || '';
-  if (status === 'Pending Line Manager Approval' || status === 'Pending Manager Approval') {
-    const lmId = row.line_manager_id ?? row.lineManagerId ?? row.approver_id ?? row.approverId;
-    return Number(lmId) === Number(user.id);
-  }
-  if (status === 'Pending Finance Approval') return Boolean(role?.is_finance_manager);
-  if (status === 'Pending HR Approval') return Boolean(role?.is_hr_manager);
-  if (status === 'Pending GM Approval') return Boolean(role?.is_gm || role?.is_executive);
-  if (status === 'Pending Executive Approval') return Boolean(role?.is_executive);
-  return false;
+/** Whether the signed-in user can act on this request's current stage — computed by the API. */
+function canApproveReq(row) {
+  return Boolean(row?.workflow?.can_act);
 }
 
 function HubTabs({ tabs, value, onChange }) {
@@ -246,7 +237,7 @@ export default function DashboardHome() {
 
   const pendingForMe = useMemo(() => {
     return reqs
-      .filter((r) => isPendingStatus(r.status) && canApproveReq(r, user, role))
+      .filter((r) => isPendingStatus(r.status) && canApproveReq(r))
       .slice(0, RECENT_LIMIT);
   }, [reqs, user, role]);
 
@@ -332,7 +323,8 @@ export default function DashboardHome() {
     );
   }
 
-  const canActOnOpenReq = reqDetail && canApproveReq(reqDetail, user, role);
+  // Quick approve/reject only for plain approval stages; inventory, pricing and finance forms live on Pending Approvals.
+  const canActOnOpenReq = Boolean(reqDetail && canApproveReq(reqDetail) && reqDetail.workflow?.action === 'approve');
 
   return (
     <div className="dash-hub">
