@@ -10,7 +10,7 @@ import DateRangeFilter from '../../components/DateRangeFilter';
 import InventorySourceBadge from '../../components/InventorySourceBadge';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { requisitionsApi, uploadsApi } from '../../services/api';
+import { requisitionsApi, uploadsApi, inventoryApi } from '../../services/api';
 import UserAvatar from '../../components/UserAvatar';
 import { useAvatarDirectory } from '../../hooks/useAvatarDirectory';
 import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
@@ -112,6 +112,8 @@ export default function ApprovalsPage() {
   const [vendorQuotes, setVendorQuotes] = useState('');
   const [stageNote, setStageNote] = useState('');
   const [finance, setFinance] = useState({ quote_amount: '', vendor: '', invoice_ref: '', payment_ref: '' });
+  const [inventoryItems, setInventoryItems] = useState([]);
+  const [purchase, setPurchase] = useState(null);
 
   const isItAdmin = Boolean(role?.is_it_admin);
   const isHrManager = Boolean(role?.is_hr_manager);
@@ -153,6 +155,11 @@ export default function ApprovalsPage() {
     if (!hasPermission('approvals')) return;
     load();
   }, [hasPermission, load]);
+
+  useEffect(() => {
+    if (!isItAdmin) return;
+    inventoryApi.list({ active: '1' }).then((res) => setInventoryItems(res.data || [])).catch(() => {});
+  }, [isItAdmin]);
 
   const pending = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -239,6 +246,21 @@ export default function ApprovalsPage() {
         payment_ref: '',
       });
       setTotalPrice(data?.total_price != null ? String(data.total_price) : '');
+      const fin = data?.finance_details || {};
+      setPurchase({
+        quantity: String(data?.quantity ?? 1),
+        inventory_item_id: '',
+        item_name: data?.item || '',
+        brand: '',
+        serial_number: '',
+        vendor: fin.vendor || '',
+        cost: fin.quote_amount != null
+          ? String(fin.quote_amount)
+          : data?.approved_amount != null ? String(data.approved_amount) : '',
+        delivery_date: new Date().toISOString().slice(0, 10),
+        location: '',
+        notes: '',
+      });
       const quotes = data?.vendor_quotes ?? data?.vendorQuotes;
       setVendorQuotes(
         typeof quotes === 'string'
@@ -400,6 +422,39 @@ export default function ApprovalsPage() {
       }
     } catch (err) {
       showToast('Error', err.message || 'Action failed', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitConfirmPurchase() {
+    if (!detail || !purchase) return;
+    const qty = Number(purchase.quantity);
+    if (!Number.isInteger(qty) || qty < 1) {
+      showToast('Required', 'Enter the quantity received.', 'warning');
+      return;
+    }
+    if (!purchase.inventory_item_id && !purchase.item_name.trim()) {
+      showToast('Required', 'Choose an inventory item or enter the item name.', 'warning');
+      return;
+    }
+    const label = purchase.item_name || detail.item;
+    if (!window.confirm(`Confirm that ${qty} x "${label}" was received and verified? This adds it to inventory and creates the procurement log.`)) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await requisitionsApi.confirmPurchase(pid(detail), {
+        ...purchase,
+        quantity: qty,
+        inventory_item_id: purchase.inventory_item_id ? Number(purchase.inventory_item_id) : undefined,
+      });
+      showToast('Purchase Confirmed', 'Added to inventory and procurement log created. Assign it under Assign Assets.', 'success');
+      await openDetail(pid(detail));
+      await load();
+      inventoryApi.list({ active: '1' }).then((res) => setInventoryItems(res.data || [])).catch(() => {});
+    } catch (err) {
+      showToast('Error', err.message || 'Could not confirm purchase', 'error');
     } finally {
       setBusy(false);
     }
@@ -731,9 +786,29 @@ export default function ApprovalsPage() {
                   <i className="fa-solid fa-boxes-stacked" /><span>IT Inventory Check:</span>
                 </div>
                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                  Confirm whether &quot;{detail.item}&quot; is available in inventory. In stock goes to HR approval
-                  (or straight to delivery when HR approval does not apply); not in stock starts procurement.
+                  Confirm whether {detail.quantity ?? 1} × &quot;{detail.item}&quot; is available and suitable. In stock goes
+                  to HR approval (or straight to delivery when HR approval does not apply); not in stock starts procurement.
                 </span>
+                {detail.indicative_stock ? (
+                  <div style={{ fontSize: 13 }}>
+                    <strong>Indicative stock (verify manually):</strong>{' '}
+                    {detail.indicative_stock.items.length === 0 ? (
+                      <span>no inventory item named &quot;{detail.item}&quot;.</span>
+                    ) : (
+                      <span>
+                        {detail.indicative_stock.available} available
+                        {detail.indicative_stock.available < (detail.quantity ?? 1) ? ' — fewer than requested' : ''}
+                        {' '}({detail.indicative_stock.items
+                          .map((i) => `${i.public_id}: ${i.available} free, ${i.assigned} assigned${i.location ? `, ${i.location}` : ''}`)
+                          .join('; ')})
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13 }}>
+                    <strong>Software:</strong> check the license / seat count in Inventory Management manually.
+                  </div>
+                )}
               </div>
             ) : null}
 
@@ -844,8 +919,92 @@ export default function ApprovalsPage() {
                 </div>
                 <div className="admin-action-buttons">
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    Use the footer buttons (In Progress / On Hold / Completed). Reject is not available at this stage.
+                    Assign the item(s) under Assign Assets, then use the footer buttons (In Progress / On Hold /
+                    Completed). Completion needs all {detail.quantity ?? 1} item(s) assigned
+                    {detail.inventory_available === false ? ' and the purchase confirmed' : ''}.
                   </span>
+                </div>
+              </div>
+            ) : null}
+
+            {detail.can_confirm_purchase && purchase ? (
+              <div className="admin-ticket-action-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
+                <div className="admin-action-info">
+                  <i className="fa-solid fa-truck-ramp-box" /><span>Confirm Purchase (after delivery / activation):</span>
+                </div>
+                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  Verify the received hardware or activated license first. Confirming adds it to inventory and creates the
+                  procurement log linked to this request.
+                </span>
+                <div className="form-grid-2" style={{ width: '100%' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Add to Inventory Item</label>
+                    <select
+                      className="form-control form-control-select"
+                      value={purchase.inventory_item_id}
+                      onChange={(e) => {
+                        const it = inventoryItems.find((i) => String(i.id) === e.target.value);
+                        setPurchase((p) => ({ ...p, inventory_item_id: e.target.value, item_name: it ? it.name : detail.item || '' }));
+                      }}
+                    >
+                      <option value="">New / matching item by name</option>
+                      {inventoryItems
+                        .filter((i) => i.type === (String(detail.type || '').toLowerCase().startsWith('soft') ? 'Software' : 'Hardware'))
+                        .map((i) => (
+                          <option key={i.id} value={String(i.id)}>{i.name} ({i.quantity_available} available)</option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Item Name *</label>
+                    <input
+                      className="form-control"
+                      disabled={Boolean(purchase.inventory_item_id)}
+                      value={purchase.item_name}
+                      onChange={(e) => setPurchase((p) => ({ ...p, item_name: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Quantity Received *</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      className="form-control"
+                      value={purchase.quantity}
+                      onChange={(e) => setPurchase((p) => ({ ...p, quantity: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Delivery / Activation Date</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={purchase.delivery_date}
+                      onChange={(e) => setPurchase((p) => ({ ...p, delivery_date: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Vendor</label>
+                    <input className="form-control" value={purchase.vendor} onChange={(e) => setPurchase((p) => ({ ...p, vendor: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Actual Cost</label>
+                    <input className="form-control" value={purchase.cost} onChange={(e) => setPurchase((p) => ({ ...p, cost: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Brand / Model</label>
+                    <input className="form-control" value={purchase.brand} onChange={(e) => setPurchase((p) => ({ ...p, brand: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Serial No(s). / License Key</label>
+                    <input className="form-control" value={purchase.serial_number} onChange={(e) => setPurchase((p) => ({ ...p, serial_number: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="admin-action-buttons">
+                  <button type="button" className="btn btn-success btn-sm" disabled={busy} onClick={submitConfirmPurchase}>
+                    <i className="fa-solid fa-clipboard-check" /><span>{busy ? 'Confirming...' : 'Confirm Purchase'}</span>
+                  </button>
                 </div>
               </div>
             ) : null}
@@ -873,6 +1032,22 @@ export default function ApprovalsPage() {
                 <span className="label">Item</span>
                 <span className="val">{detail.item || '—'}</span>
               </div>
+              <div className="summary-item">
+                <span className="label">Quantity</span>
+                <span className="val">{detail.quantity ?? 1}</span>
+              </div>
+              <div className="summary-item">
+                <span className="label">Assigned</span>
+                <span className="val">{detail.assigned_count ?? 0} of {detail.quantity ?? 1}</span>
+              </div>
+              {detail.purchase_confirmed_at ? (
+                <div className="summary-item" style={{ gridColumn: '1 / -1' }}>
+                  <span className="label">Purchase Confirmed</span>
+                  <span className="val">
+                    {new Date(detail.purchase_confirmed_at).toLocaleString()} — added to inventory; assign under Assign Assets
+                  </span>
+                </div>
+              ) : null}
               <div className="summary-item" style={{ gridColumn: '1 / -1' }}>
                 <span className="label">Project</span>
                 <span className="val">{detail.project || '—'}</span>

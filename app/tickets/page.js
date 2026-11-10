@@ -43,9 +43,14 @@ function pid(t) {
   return t?.public_id || t?.publicId || t?.id;
 }
 
+const TRIAGE = 'Pending IT Triage';
+const WORKING = ['Assigned', 'In Progress', 'On Hold'];
+const CLOSED = ['Completed', 'Rejected'];
+
 function slaInfo(ticket) {
   const status = (ticket.status || '').toLowerCase();
-  if (status.includes('resolved')) return { text: 'Closed', cls: 'badge badge-sla' };
+  if (status.includes('completed') || status.includes('reject')) return { text: 'Closed', cls: 'badge badge-sla' };
+  if (status.includes('resolved')) return { text: 'Resolved', cls: 'badge badge-sla' };
   if (status.includes('hold')) return { text: 'Paused', cls: 'badge badge-sla-warning' };
   const due = ticket.due_timestamp || ticket.dueTimestamp;
   if (!due) return { text: 'SLA Active', cls: 'badge badge-sla' };
@@ -64,7 +69,6 @@ function priorityClass(p) {
 
 const emptyForm = {
   department: '',
-  priority: '',
   category: '',
   other_category: '',
   subject: '',
@@ -126,6 +130,11 @@ function TicketsPageInner() {
   const [lmPriority, setLmPriority] = useState('Medium');
   const [lmReason, setLmReason] = useState('');
   const [lmBusy, setLmBusy] = useState(false);
+  const [assignees, setAssignees] = useState([]);
+  const [assignForm, setAssignForm] = useState({ assignee_id: '', priority: '' });
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [resolvePrompt, setResolvePrompt] = useState(false);
+  const [resolutionText, setResolutionText] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,7 +158,10 @@ function TicketsPageInner() {
     usersApi.directory().then((res) => {
       setDirectory((res.data || []).filter((u) => (u.status || 'Active') === 'Active'));
     }).catch(() => {});
-  }, [hasPermission, load]);
+    if (isItAdmin) {
+      ticketsApi.assignees().then((res) => setAssignees(res.data || [])).catch(() => {});
+    }
+  }, [hasPermission, load, isItAdmin]);
 
   function openCreateForm() {
     setForm({
@@ -163,7 +175,7 @@ function TicketsPageInner() {
   }
 
   useEffect(() => {
-    if (searchParams.get('create') === '1' && hasPermission('tickets')) {
+    if (searchParams.get('create') === '1' && hasPermission('tickets') && !user?.is_super_admin) {
       openCreateForm();
       router.replace('/tickets');
     }
@@ -219,7 +231,6 @@ function TicketsPageInner() {
       }
       await ticketsApi.create({
         department: form.department,
-        ...(form.priority ? { priority: form.priority } : {}),
         category: form.category,
         other_category: form.category === 'Other' ? form.other_category : null,
         subject: form.subject,
@@ -229,7 +240,7 @@ function TicketsPageInner() {
         attachment_url,
         on_behalf: Boolean(form.behalf_name?.trim()),
       });
-      showToast('Ticket Created', 'Ticket submitted to your Line Manager for review.', 'success');
+      showToast('Ticket Created', 'Ticket submitted. Your Line Manager sets the priority before IT picks it up.', 'success');
       setCreateOpen(false);
       setForm(emptyForm);
       setAttachFile(null);
@@ -289,7 +300,7 @@ function TicketsPageInner() {
   const kpis = useMemo(() => {
     const total = filtered.length;
     const progress = filtered.filter((t) => ['Assigned', 'In Progress'].includes(t.status)).length;
-    const resolved = filtered.filter((t) => (t.status || '').toLowerCase().includes('resolved')).length;
+    const resolved = filtered.filter((t) => ['Resolved', 'Completed'].includes(t.status)).length;
     const overdue = filtered.filter((t) => slaInfo(t).text === 'Overdue').length;
     return { total, progress, resolved, overdue };
   }, [filtered]);
@@ -300,7 +311,6 @@ function TicketsPageInner() {
       const t = res.data;
       setDetail(t);
       setEditForm({
-        priority: t.priority || 'Medium',
         category: t.category || '',
         other_category: t.other_category || t.otherCategory || '',
         subject: t.subject || '',
@@ -308,6 +318,8 @@ function TicketsPageInner() {
       });
       setLmPriority(t.priority || 'Medium');
       setLmReason('');
+      setAssignForm({ assignee_id: t.assigned_to_id ? String(t.assigned_to_id) : '', priority: '' });
+      setResolutionText('');
       setReplyText('');
       setDetailOpen(true);
     } catch (err) {
@@ -336,7 +348,16 @@ function TicketsPageInner() {
     try {
       if (action === 'inProgress') await ticketsApi.inProgress(id);
       if (action === 'resume') await ticketsApi.resume(id);
-      if (action === 'resolve') await ticketsApi.resolve(id);
+      if (action === 'complete') await ticketsApi.complete(id);
+      if (action === 'resolve') {
+        if (!resolutionText.trim()) {
+          showToast('Resolution', 'Please describe how the issue was resolved.', 'warning');
+          return;
+        }
+        await ticketsApi.resolve(id, resolutionText.trim());
+        setResolvePrompt(false);
+        setResolutionText('');
+      }
       if (action === 'hold') {
         if (!holdReason.trim()) {
           showToast('Hold Reason', 'Please enter a hold reason.', 'warning');
@@ -377,16 +398,35 @@ function TicketsPageInner() {
     return Number(lmId) === Number(user.id);
   }
 
-  function canItAdminAct(ticket) {
-    if (!isItAdmin || !ticket) return false;
-    const s = (ticket.status || '').toLowerCase();
-    if (isPendingLineManager(ticket) || s.includes('reject')) return false;
-    return (
-      s.includes('assigned') ||
-      s.includes('progress') ||
-      s.includes('hold') ||
-      (!s.includes('resolved') && !s.includes('pending'))
-    );
+  function isAssigneeFor(ticket) {
+    if (!ticket || !user?.id || ticket.assigned_to_id == null) return false;
+    return Number(ticket.assigned_to_id) === Number(user.id);
+  }
+
+  async function submitAssign() {
+    if (!detail) return;
+    if (!assignForm.assignee_id) {
+      showToast('Required', 'Select the IT resource to assign.', 'warning');
+      return;
+    }
+    if (!detail.priority && !assignForm.priority) {
+      showToast('Required', 'This ticket had no Line Manager review — set a priority.', 'warning');
+      return;
+    }
+    setAssignBusy(true);
+    try {
+      await ticketsApi.assign(pid(detail), {
+        assignee_id: Number(assignForm.assignee_id),
+        ...(!detail.priority ? { priority: assignForm.priority } : {}),
+      });
+      showToast('Assigned', 'Ticket assigned.', 'success');
+      await openDetail(pid(detail));
+      await load();
+    } catch (err) {
+      showToast('Error', err.message || 'Assignment failed', 'error');
+    } finally {
+      setAssignBusy(false);
+    }
   }
 
   async function submitLmReview(action) {
@@ -431,14 +471,22 @@ function TicketsPageInner() {
   }
 
   const status = (detail?.status || '').toLowerCase();
+  const detailStatus = detail?.status || '';
   const showLmReview = Boolean(detail && isPendingLineManager(detail) && isLineManagerFor(detail));
-  const showItActions = Boolean(detail && canItAdminAct(detail) && !status.includes('resolved'));
+  // Step 3: Admin/IT triage & (re)assignment.
+  const showTriage = Boolean(detail && isItAdmin && (detailStatus === TRIAGE || WORKING.includes(detailStatus)));
+  // Step 4: only the assigned IT resource records progress / resolution.
+  const showItActions = Boolean(detail && isAssigneeFor(detail) && WORKING.includes(detailStatus));
+  // Step 5: Admin/IT completes a resolved ticket.
+  const showComplete = Boolean(detail && isItAdmin && detailStatus === 'Resolved');
+  const canEditDetails = showTriage;
+  const isClosed = CLOSED.includes(detailStatus);
 
   return (
     <AppShell
       title={canSeeAll ? 'All Tickets' : 'My Tickets'}
       subtitle="Raise technical support requests and track SLA progress."
-      actions={(
+      actions={user?.is_super_admin ? null : (
         <button
           type="button"
           className="btn btn-primary"
@@ -465,7 +513,7 @@ function TicketsPageInner() {
         </div>
         <div className="metric-card">
           <div className="metric-info">
-            <h3>Resolved</h3>
+            <h3>Resolved / Completed</h3>
             <div className="counter">{kpis.resolved}</div>
           </div>
           <div className="metric-icon icon-resolved"><i className="fa-solid fa-circle-check" /></div>
@@ -519,10 +567,12 @@ function TicketsPageInner() {
             >
               <option value="All">All Statuses</option>
               <option value="Pending Line Manager">Pending Line Manager</option>
+              <option value={TRIAGE}>{TRIAGE}</option>
               <option value="Assigned">Assigned</option>
               <option value="In Progress">In Progress</option>
               <option value="On Hold">On Hold</option>
               <option value="Resolved">Resolved</option>
+              <option value="Completed">Completed</option>
               <option value="Rejected">Rejected</option>
             </select>
           </div>
@@ -671,45 +721,19 @@ function TicketsPageInner() {
               </select>
             </div>
             <div className="form-group">
-              <label>Priority Level {isItAdmin ? '(optional)' : ''}</label>
-              {isItAdmin ? (
-                <select
-                  className="form-control form-control-select"
-                  value={form.priority}
-                  onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))}
-                >
-                  <option value="">Set by Line Manager</option>
-                  <option value="Low">Low (General Inquiry / Minor)</option>
-                  <option value="Medium">Medium (Standard Task)</option>
-                  <option value="High">High (Urgent / Work Stopped)</option>
-                </select>
-              ) : (
-                <input
-                  className="form-control"
-                  readOnly
-                  value="Set by your Line Manager after review"
-                />
-              )}
+              <label>Priority Level</label>
+              <input
+                className="form-control"
+                readOnly
+                value="Set by the Line Manager after review"
+              />
             </div>
           </div>
-          {form.priority ? (
-            <div className="sla-live-preview-box">
-              <i className="fa-solid fa-stopwatch" />
-              <div>
-                <strong>Target Resolution SLA Commitment:</strong>{' '}
-                <span>
-                  {form.priority === 'High' && 'High Priority: IT resolution commitment within 4 Hours.'}
-                  {form.priority === 'Medium' && 'Medium Priority: IT resolution commitment within 24 Hours.'}
-                  {form.priority === 'Low' && 'Low Priority: IT resolution commitment within 48 Hours.'}
-                </span>
-              </div>
-            </div>
-          ) : (
-            <p style={{ margin: '-4px 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-              <i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />
-              New tickets start as <strong>Pending Line Manager</strong>. Your manager sets priority before IT receives the ticket.
-            </p>
-          )}
+          <p style={{ margin: '-4px 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+            <i className="fa-solid fa-circle-info" style={{ marginRight: 6 }} />
+            New tickets start as <strong>Pending Line Manager</strong>: the manager sets the priority, then Admin/IT
+            assigns the ticket. Without a Line Manager, the ticket goes straight to IT triage.
+          </p>
           <div className="form-group">
             <label>Issue Category *</label>
             <select
@@ -797,7 +821,7 @@ function TicketsPageInner() {
         footer={(
           <>
             <button type="button" className="btn btn-secondary" onClick={() => setDetailOpen(false)}>Close</button>
-            {isItAdmin && !status.includes('resolved') && showItActions ? (
+            {canEditDetails ? (
               <button type="button" className="btn btn-primary" disabled={saving} onClick={saveDetail}>
                 <i className="fa-solid fa-floppy-disk" /><span>Save Changes</span>
               </button>
@@ -811,7 +835,7 @@ function TicketsPageInner() {
               <div><strong>Status:</strong> <span className={statusBadgeClass(detail.status)}>{detail.status}</span></div>
               <div>
                 <strong>Assigned To:</strong>{' '}
-                <strong style={{ color: 'var(--primary)' }}>{detail.assigned_to || detail.assignedTo || 'IT Support'}</strong>
+                <strong style={{ color: 'var(--primary)' }}>{detail.assigned_to || detail.assignedTo || 'Not assigned yet'}</strong>
               </div>
               <div><span className={slaInfo(detail).cls}>{slaInfo(detail).text}</span></div>
               <div style={{ color: 'var(--text-muted)', fontSize: 12, width: '100%', marginTop: 4 }}>
@@ -873,18 +897,66 @@ function TicketsPageInner() {
               </div>
             ) : null}
 
+            {showTriage ? (
+              <div
+                className="admin-ticket-action-bar"
+                style={{ flexDirection: 'column', alignItems: 'stretch', gap: 12 }}
+              >
+                <div className="admin-action-info">
+                  <i className="fa-solid fa-sitemap" />
+                  <span>{detailStatus === TRIAGE ? 'IT Triage — assign to an IT resource:' : 'Reassign ticket:'}</span>
+                </div>
+                <div className="form-grid-2" style={{ width: '100%' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label>Assign To *</label>
+                    <select
+                      className="form-control form-control-select"
+                      value={assignForm.assignee_id}
+                      onChange={(e) => setAssignForm((f) => ({ ...f, assignee_id: e.target.value }))}
+                    >
+                      <option value="">Select IT resource</option>
+                      {assignees.map((a) => (
+                        <option key={a.id} value={String(a.id)}>{a.name} ({a.email})</option>
+                      ))}
+                    </select>
+                  </div>
+                  {!detail.priority ? (
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>Set Priority * (no Line Manager review)</label>
+                      <select
+                        className="form-control form-control-select"
+                        value={assignForm.priority}
+                        onChange={(e) => setAssignForm((f) => ({ ...f, priority: e.target.value }))}
+                      >
+                        <option value="">Select priority</option>
+                        <option value="Low">Low (48h SLA)</option>
+                        <option value="Medium">Medium (24h SLA)</option>
+                        <option value="High">High (4h SLA)</option>
+                      </select>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="admin-action-buttons">
+                  <button type="button" className="btn btn-success btn-sm" disabled={assignBusy} onClick={submitAssign}>
+                    <i className="fa-solid fa-user-check" />
+                    <span>{detail.assigned_to_id ? 'Reassign' : 'Assign'}</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             {showItActions ? (
               <div className="admin-ticket-action-bar">
                 <div className="admin-action-info">
-                  <i className="fa-solid fa-user-shield" /><span>IT Support Actions:</span>
+                  <i className="fa-solid fa-user-shield" /><span>Assignee Actions:</span>
                 </div>
                 <div className="admin-action-buttons">
-                  {!status.includes('progress') && !status.includes('hold') ? (
+                  {detailStatus === 'Assigned' ? (
                     <button type="button" className="btn btn-info btn-sm" onClick={() => runAction('inProgress')}>
                       <i className="fa-solid fa-spinner" /><span>Mark In Progress</span>
                     </button>
                   ) : null}
-                  {!status.includes('hold') ? (
+                  {detailStatus !== 'On Hold' ? (
                     <button type="button" className="btn btn-warning btn-sm" onClick={() => setHoldPrompt(true)}>
                       <i className="fa-solid fa-pause" /><span>Put on Hold</span>
                     </button>
@@ -893,8 +965,23 @@ function TicketsPageInner() {
                       <i className="fa-solid fa-play" /><span>Resume Work</span>
                     </button>
                   )}
-                  <button type="button" className="btn btn-success btn-sm" onClick={() => runAction('resolve')}>
-                    <i className="fa-solid fa-circle-check" /><span>Mark Resolved & Close</span>
+                  {detailStatus !== 'On Hold' ? (
+                    <button type="button" className="btn btn-success btn-sm" onClick={() => setResolvePrompt(true)}>
+                      <i className="fa-solid fa-circle-check" /><span>Mark Resolved</span>
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {showComplete ? (
+              <div className="admin-ticket-action-bar">
+                <div className="admin-action-info">
+                  <i className="fa-solid fa-flag-checkered" /><span>Resolution recorded — complete the ticket:</span>
+                </div>
+                <div className="admin-action-buttons">
+                  <button type="button" className="btn btn-success btn-sm" onClick={() => runAction('complete')}>
+                    <i className="fa-solid fa-circle-check" /><span>Mark Completed</span>
                   </button>
                 </div>
               </div>
@@ -910,10 +997,15 @@ function TicketsPageInner() {
               </div>
             ) : null}
 
-            {status.includes('resolved') ? (
+            {detailStatus === 'Resolved' || detailStatus === 'Completed' ? (
               <div className="resolved-notice">
                 <i className="fa-solid fa-circle-check" />
-                <span>This ticket has been resolved and closed.</span>
+                <span>
+                  {detailStatus === 'Completed'
+                    ? `Completed${detail.completed_at ? ` on ${new Date(detail.completed_at).toLocaleString()}` : ''}.`
+                    : 'Resolved — awaiting completion by Admin/IT.'}
+                  {detail.resolution ? ` Resolution: ${detail.resolution}` : ''}
+                </span>
               </div>
             ) : null}
 
@@ -929,23 +1021,14 @@ function TicketsPageInner() {
             </div>
             <div className="form-grid-2">
               <div className="form-group">
-                <label>Priority Level</label>
-                <select
-                  className="form-control form-control-select"
-                  disabled={!showItActions}
-                  value={editForm.priority || ''}
-                  onChange={(e) => setEditForm((f) => ({ ...f, priority: e.target.value }))}
-                >
-                  <option value="Low">Low</option>
-                  <option value="Medium">Medium</option>
-                  <option value="High">High</option>
-                </select>
+                <label>Priority Level (set by Line Manager)</label>
+                <input className="form-control" disabled value={detail.priority || 'Not set yet'} />
               </div>
               <div className="form-group">
                 <label>Issue Category</label>
                 <select
                   className="form-control form-control-select"
-                  disabled={!showItActions}
+                  disabled={!canEditDetails}
                   value={editForm.category || ''}
                   onChange={(e) => setEditForm((f) => ({ ...f, category: e.target.value }))}
                 >
@@ -957,7 +1040,7 @@ function TicketsPageInner() {
               <label>Subject</label>
               <input
                 className="form-control"
-                disabled={!showItActions}
+                disabled={!canEditDetails}
                 value={editForm.subject || ''}
                 onChange={(e) => setEditForm((f) => ({ ...f, subject: e.target.value }))}
               />
@@ -966,7 +1049,7 @@ function TicketsPageInner() {
               <label>Description</label>
               <textarea
                 className="form-control"
-                disabled={!showItActions}
+                disabled={!canEditDetails}
                 value={editForm.description || ''}
                 onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
               />
@@ -993,6 +1076,27 @@ function TicketsPageInner() {
               </div>
             ) : null}
 
+            {(detail.status_history || []).length ? (
+              <div className="ticket-thread-section">
+                <h4 className="thread-heading"><i className="fa-solid fa-clock-rotate-left" /> Status History</h4>
+                <div className="timeline-thread-box">
+                  {detail.status_history.map((h) => (
+                    <div key={h.id} className="thread-msg">
+                      <div className="thread-msg-header">
+                        <strong>
+                          {h.from_status ? `${h.from_status} → ` : ''}{h.to_status}
+                        </strong>
+                        <span>{h.created_at ? new Date(h.created_at).toLocaleString() : ''}</span>
+                      </div>
+                      <div className="thread-msg-body">
+                        {h.changed_by_name || 'System'}{h.note ? ` — ${h.note}` : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div className="ticket-thread-section">
               <h4 className="thread-heading"><i className="fa-solid fa-comments" /> Discussion Thread</h4>
               <div className="timeline-thread-box">
@@ -1010,7 +1114,7 @@ function TicketsPageInner() {
                   ))
                 )}
               </div>
-              {!status.includes('resolved') ? (
+              {!isClosed ? (
                 <div className="reply-input-wrapper">
                   <textarea
                     className="form-control"
@@ -1050,6 +1154,31 @@ function TicketsPageInner() {
             value={holdReason}
             onChange={(e) => setHoldReason(e.target.value)}
             placeholder="Waiting on requester / vendor / parts..."
+          />
+        </div>
+      </Modal>
+
+      <Modal
+        open={resolvePrompt}
+        title="Record Resolution"
+        icon="fa-circle-check"
+        onClose={() => setResolvePrompt(false)}
+        maxWidth={480}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setResolvePrompt(false)}>Cancel</button>
+            <button type="button" className="btn btn-success" onClick={() => runAction('resolve')}>Mark Resolved</button>
+          </>
+        )}
+      >
+        <div className="form-group">
+          <label>Resolution Details *</label>
+          <textarea
+            className="form-control"
+            rows={4}
+            value={resolutionText}
+            onChange={(e) => setResolutionText(e.target.value)}
+            placeholder="What was the cause and how was it fixed?"
           />
         </div>
       </Modal>

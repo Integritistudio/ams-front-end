@@ -238,7 +238,6 @@ export default function ProcurementPage() {
     setSaving(true);
     try {
       const body = {
-        source_req_id: form.source_req_id || null,
         item_name: form.item_name.trim(),
         vendor: form.vendor.trim(),
         cost: form.cost.trim() || null,
@@ -258,9 +257,7 @@ export default function ProcurementPage() {
         'Saved',
         editingId
           ? 'Procurement entry updated.'
-          : form.source_req_id
-            ? 'Procurement saved — linked asset request marked Completed.'
-            : 'Procurement entry saved & delivery recorded.',
+          : 'Procurement entry saved & delivery recorded.',
         'success'
       );
       setOpen(false);
@@ -395,24 +392,12 @@ export default function ProcurementPage() {
       >
         <form id="procForm" onSubmit={submit} autoComplete="off">
           {!editingId ? (
-            <div className="form-group">
-              <label>Link Pending Asset Request</label>
-              <select
-                className="form-control form-control-select"
-                value={form.source_req_id}
-                onChange={(e) => applySourceReq(e.target.value)}
-              >
-                <option value="">None — ad-hoc procurement (no linked request)</option>
-                {pendingReqs.map((r) => (
-                  <option key={r.id || pid(r)} value={String(r.id)}>
-                    #{pid(r)} — {r.item} ({r.requester_name || r.requesterName}) [{r.status}]
-                  </option>
-                ))}
-              </select>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-                {pendingReqs.length === 0
-                  ? 'No pending asset requests awaiting IT action.'
-                  : 'Selecting a request auto-fills item, employee, and department. Saving marks that request Completed.'}
+            <div className="hold-notice-box" style={{ marginBottom: 16 }}>
+              <i className="fa-solid fa-circle-info" style={{ marginTop: 2 }} />
+              <div>
+                Ad-hoc procurement only. Purchases for an asset request are recorded with
+                <strong> Confirm Purchase</strong> on the request (Pending Approvals), which creates the procurement
+                log and adds the item to inventory automatically.
               </div>
             </div>
           ) : null}

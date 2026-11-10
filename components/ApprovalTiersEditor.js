@@ -7,7 +7,7 @@ import { useToast } from '../context/ToastContext';
 import { approvalTiersApi, rolesApi } from '../services/api';
 
 const SELF_APPROVAL_OPTIONS = [
-  { value: 'escalate', label: 'Escalate to next tier' },
+  { value: 'escalate', label: 'Skip own step (next tier covers it)' },
   { value: 'manual', label: 'May approve own request' },
   { value: 'auto', label: 'Auto-approve own request' },
 ];
@@ -34,7 +34,7 @@ function toPayload(draft) {
 
 /**
  * Super Admin editor for price-approval tiers (which role approves up to which amount).
- * Procurement amounts go directly to the lowest active tier whose limit covers them.
+ * Procurement amounts are approved sequentially by every active tier up to the one whose limit covers them.
  */
 export default function ApprovalTiersEditor() {
   const { showToast } = useToast();
@@ -120,9 +120,10 @@ export default function ApprovalTiersEditor() {
   return (
     <>
       <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 14px', lineHeight: 1.45 }}>
-        After IT submits the initial price, the request goes directly to the lowest active tier whose limit covers
-        the amount (leave the limit empty for unlimited). &quot;Own request&quot; decides what happens when the
-        requester holds that tier&apos;s role and the amount is within its limit.
+        After IT submits the initial price, approvals run in order from the lowest tier up to the first tier whose
+        limit covers the amount: every tier on the way must approve (e.g. HR, then GM, then Executive). Leave the
+        limit empty for unlimited. &quot;Own request&quot; decides what happens at a tier whose role the requester
+        holds: skip it (escalate), let them approve it, or record it as auto-approved.
       </p>
       {loading ? (
         <DataLoader label="Loading approval tiers..." />

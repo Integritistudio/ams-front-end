@@ -9,7 +9,7 @@ import DataLoader from '../../components/DataLoader';
 import DateRangeFilter from '../../components/DateRangeFilter';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { assetsApi, usersApi, requisitionsApi } from '../../services/api';
+import { assetsApi, usersApi, requisitionsApi, inventoryApi } from '../../services/api';
 import { emptyDateRange, rowInDateRange } from '../../lib/dateRange';
 
 const PAGE_SIZE = 10;
@@ -44,7 +44,16 @@ const emptyForm = {
   assigned_date: '',
   note: '',
   source_req_id: '',
+  inventory_item_id: '',
 };
+
+function inventoryTypeOf(reqType) {
+  return String(reqType || '').toLowerCase().startsWith('soft') ? 'Software' : 'Hardware';
+}
+
+function categoryForInventoryType(type) {
+  return type === 'Software' ? 'Software License' : 'Hardware';
+}
 
 export default function AssignAssetsPage() {
   const { hasPermission } = useAuth();
@@ -52,6 +61,7 @@ export default function AssignAssetsPage() {
   const [rows, setRows] = useState([]);
   const [users, setUsers] = useState([]);
   const [pendingReqs, setPendingReqs] = useState([]);
+  const [inventoryItems, setInventoryItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
@@ -85,7 +95,37 @@ export default function AssignAssetsPage() {
         setPendingReqs(list);
       })
       .catch(() => {});
+    loadInventory();
   }, [hasPermission, load]);
+
+  function loadInventory() {
+    inventoryApi.list({ active: '1' }).then((res) => setInventoryItems(res.data || [])).catch(() => {});
+  }
+
+  const linkedReq = useMemo(
+    () => pendingReqs.find((r) => String(pid(r)) === String(form.source_req_id)) || null,
+    [pendingReqs, form.source_req_id]
+  );
+
+  // Only items of the request's type (and, after Confirm Purchase, the purchased item) can be assigned.
+  const selectableItems = useMemo(() => {
+    let list = inventoryItems;
+    if (linkedReq) {
+      list = list.filter((i) => i.type === inventoryTypeOf(linkedReq.type));
+      if (linkedReq.inventory_item_id) list = list.filter((i) => Number(i.id) === Number(linkedReq.inventory_item_id));
+    }
+    return list;
+  }, [inventoryItems, linkedReq]);
+
+  function applyInventoryItem(id) {
+    const item = inventoryItems.find((i) => String(i.id) === String(id));
+    setForm((f) => ({
+      ...f,
+      inventory_item_id: id,
+      name: item ? item.name : f.name,
+      category: item ? categoryForInventoryType(item.type) : f.category,
+    }));
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -181,7 +221,8 @@ export default function AssignAssetsPage() {
       serial_number: row.serial_number || row.serialNumber || '',
       assigned_date: (row.assigned_date || row.assignedDate || todayISO()).toString().slice(0, 10),
       note: row.note || '',
-      source_req_id: row.source_req_id || row.source_req_public_id || '',
+      source_req_id: row.source_req_public_id || row.source_req_id || '',
+      inventory_item_id: row.inventory_item_id ? String(row.inventory_item_id) : '',
     });
     setOpen(true);
   }
@@ -190,6 +231,10 @@ export default function AssignAssetsPage() {
     e.preventDefault();
     if (!form.user_email?.trim()) {
       showToast('Required', 'Select a valid employee from the search list.', 'warning');
+      return;
+    }
+    if (!editingId && !form.inventory_item_id) {
+      showToast('Required', 'Select the inventory item to assign. Items must be registered in inventory first.', 'warning');
       return;
     }
     setSaving(true);
@@ -205,6 +250,7 @@ export default function AssignAssetsPage() {
         assigned_date: form.assigned_date || todayISO(),
         note: form.note.trim() || null,
         source_req_id: form.source_req_id || null,
+        inventory_item_id: form.inventory_item_id ? Number(form.inventory_item_id) : undefined,
       };
       // asset_code is auto-generated on create; keep existing on edit
       if (editingId) {
@@ -213,9 +259,10 @@ export default function AssignAssetsPage() {
       } else {
         await assetsApi.create(body);
       }
-      showToast('Saved', editingId ? 'Asset assignment updated.' : 'Asset assigned.', 'success');
+      showToast('Saved', editingId ? 'Asset assignment updated.' : 'Asset assigned and inventory updated.', 'success');
       setOpen(false);
       await load();
+      loadInventory();
     } catch (err) {
       showToast('Error', err.message || 'Save failed', 'error');
     } finally {
@@ -224,11 +271,12 @@ export default function AssignAssetsPage() {
   }
 
   async function remove(id) {
-    if (!window.confirm('Remove this asset assignment from user?')) return;
+    if (!window.confirm('Remove this asset assignment from the user? The unit / seat goes back to inventory.')) return;
     try {
       await assetsApi.remove(id);
-      showToast('Removed', 'Asset assignment deleted.', 'info');
+      showToast('Removed', 'Asset assignment removed and returned to inventory.', 'info');
       await load();
+      loadInventory();
     } catch (err) {
       showToast('Error', err.message || 'Delete failed', 'error');
     }
@@ -409,15 +457,40 @@ export default function AssignAssetsPage() {
             <select
               className="form-control form-control-select"
               value={form.source_req_id}
-              onChange={(e) => setForm((f) => ({ ...f, source_req_id: e.target.value }))}
+              disabled={Boolean(editingId)}
+              onChange={(e) => setForm((f) => ({ ...f, source_req_id: e.target.value, inventory_item_id: '' }))}
             >
               <option value="">Not linked to any request</option>
               {pendingReqs.map((r) => (
                 <option key={pid(r)} value={pid(r)}>
-                  #{pid(r)} — {r.item} ({r.requester_name || r.requesterName}) [{r.status}]
+                  #{pid(r)} — {r.quantity > 1 ? `${r.quantity} × ` : ''}{r.item} ({r.requester_name || r.requesterName}) [{r.status}]
+                  {r.inventory_available === false && !r.purchase_confirmed_at ? ' — purchase not confirmed yet' : ''}
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="form-group">
+            <label>Assign From Inventory Item *</label>
+            <select
+              className="form-control form-control-select"
+              value={form.inventory_item_id}
+              disabled={Boolean(editingId)}
+              onChange={(e) => applyInventoryItem(e.target.value)}
+            >
+              <option value="">{editingId && !form.inventory_item_id ? 'Not linked to inventory (older record)' : 'Select inventory item'}</option>
+              {selectableItems.map((i) => {
+                const free = Math.max(0, Number(i.quantity_available || 0) - Number(i.quantity_reserved || 0));
+                return (
+                  <option key={i.id} value={String(i.id)} disabled={!editingId && free < 1}>
+                    {i.name} [{i.type}] — {free} available, {i.quantity_assigned || 0} assigned
+                  </option>
+                );
+              })}
+            </select>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+              Assigning takes one unit / license seat from this item; removing the assignment returns it.
+            </div>
           </div>
 
           <div className="form-grid-2">

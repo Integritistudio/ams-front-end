@@ -72,12 +72,13 @@ export default function InventoryPage() {
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const exportPack = useMemo(() => ({
-    headers: ['Item ID', 'Name', 'Type', 'Qty Available', 'Location', 'Notes', 'Status'],
+    headers: ['Item ID', 'Name', 'Type', 'Available', 'Assigned', 'Location', 'Notes', 'Status'],
     rows: filtered.map((r) => [
       pid(r),
       r.name || '',
       r.type || '',
       r.quantity_available ?? 0,
+      r.quantity_assigned ?? 0,
       r.location || '',
       r.notes || '',
       r.is_active === false ? 'Inactive' : 'Active',
@@ -192,7 +193,8 @@ export default function InventoryPage() {
               <th>Item ID</th>
               <th>Name</th>
               <th>Type</th>
-              <th>Qty Available</th>
+              <th>Available</th>
+              <th>Assigned</th>
               <th>Location</th>
               <th>Status</th>
               <th>Actions</th>
@@ -200,9 +202,9 @@ export default function InventoryPage() {
           </thead>
           <tbody>
             {loading ? (
-              <DataLoader colSpan={7} label="Loading inventory..." />
+              <DataLoader colSpan={8} label="Loading inventory..." />
             ) : pageRows.length === 0 ? (
-              <tr><td colSpan={7}><EmptyState text="No inventory items found." /></td></tr>
+              <tr><td colSpan={8}><EmptyState text="No inventory items found." /></td></tr>
             ) : (
               pageRows.map((r) => (
                 <tr key={pid(r)}>
@@ -210,6 +212,7 @@ export default function InventoryPage() {
                   <td>{r.name}</td>
                   <td>{r.type || '—'}</td>
                   <td>{r.quantity_available ?? 0}</td>
+                  <td>{r.quantity_assigned ?? 0}</td>
                   <td>{r.location || '—'}</td>
                   <td>
                     <span className={statusBadgeClass(r.is_active === false ? 'Inactive' : 'Active')}>

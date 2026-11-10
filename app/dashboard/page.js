@@ -114,12 +114,12 @@ export default function DashboardPage() {
       subtitle="Your operational hub — approvals, tickets, requests, and quick links."
       actions={(
         <>
-          {hasPermission('tickets') ? (
+          {hasPermission('tickets') && !user?.is_super_admin ? (
             <button type="button" className="btn btn-primary" onClick={() => setTicketDisclaimer(true)}>
               <i className="fa-solid fa-plus" /><span>Create New Ticket</span>
             </button>
           ) : null}
-          {hasPermission('requisitions') ? (
+          {hasPermission('requisitions') && !user?.is_super_admin ? (
             <button type="button" className="btn btn-primary" onClick={() => setReqDisclaimer(true)}>
               <i className="fa-solid fa-plus" /><span>New Request</span>
             </button>

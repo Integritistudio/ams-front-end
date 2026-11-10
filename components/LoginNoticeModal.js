@@ -8,8 +8,8 @@ import { ticketsApi, requisitionsApi } from '../services/api';
 import { markLoginNoticeSeen, wasLoginNoticeSeen } from '../lib/loginNotice';
 
 function isOpenTicket(t) {
-  return !(t.status || '').toLowerCase().includes('resolved')
-    && !(t.status || '').toLowerCase().includes('reject');
+  const s = (t.status || '').toLowerCase();
+  return !s.includes('resolved') && !s.includes('completed') && !s.includes('reject');
 }
 
 function isPendingReq(r) {

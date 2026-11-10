@@ -135,7 +135,10 @@ export const ticketsApi = {
   inProgress: (id) => api(`/api/tickets/${id}/in-progress`, { method: 'PATCH' }),
   hold: (id, holdReason) => api(`/api/tickets/${id}/hold`, { method: 'PATCH', body: { reason: holdReason, hold_reason: holdReason } }),
   resume: (id) => api(`/api/tickets/${id}/resume`, { method: 'PATCH' }),
-  resolve: (id, note) => api(`/api/tickets/${id}/resolve`, { method: 'PATCH', body: { note: note || 'Ticket marked resolved' } }),
+  resolve: (id, resolution) => api(`/api/tickets/${id}/resolve`, { method: 'PATCH', body: { resolution } }),
+  assignees: () => api('/api/tickets/assignees'),
+  assign: (id, body) => api(`/api/tickets/${id}/assign`, { method: 'PATCH', body }),
+  complete: (id, note) => api(`/api/tickets/${id}/complete`, { method: 'PATCH', body: note ? { note } : undefined }),
   reply: (id, text) => api(`/api/tickets/${id}/reply`, { method: 'POST', body: { text } }),
 };
 export const requisitionsApi = {
@@ -155,6 +158,7 @@ export const requisitionsApi = {
   inProgress: (id) => api(`/api/requisitions/${id}/in-progress`, { method: 'PATCH' }),
   resume: (id) => api(`/api/requisitions/${id}/resume`, { method: 'PATCH' }),
   complete: (id, note) => api(`/api/requisitions/${id}/complete`, { method: 'PATCH', body: { note: note || 'Asset request marked completed' } }),
+  confirmPurchase: (id, body) => api(`/api/requisitions/${id}/confirm-purchase`, { method: 'PATCH', body }),
   reply: (id, text) => api(`/api/requisitions/${id}/reply`, { method: 'POST', body: { text } }),
 };
 export const approvalTiersApi = {

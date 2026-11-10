@@ -273,7 +273,10 @@ export default function DashboardAnalytics() {
       return s.includes('fulfill') || s.includes('completed');
     }).length;
     const approved = reqs.filter((r) => String(r.status || '').toLowerCase().includes('approved')).length;
-    const resolved = tickets.filter((t) => String(t.status || '').toLowerCase().includes('resolved')).length;
+    const resolved = tickets.filter((t) => {
+      const s = String(t.status || '').toLowerCase();
+      return s.includes('resolved') || s.includes('completed');
+    }).length;
     return {
       tickets: tickets.length,
       openTickets,

@@ -27,6 +27,7 @@ const emptyForm = {
   type: 'Hardware',
   item: '',
   other_item: '',
+  quantity: 1,
   project: '',
   urgency: 'Standard',
   justification: '',
@@ -139,7 +140,7 @@ function RequisitionsPageInner() {
   }, [hasPermission, load]);
 
   useEffect(() => {
-    if (searchParams.get('create') === '1' && hasPermission('requisitions')) {
+    if (searchParams.get('create') === '1' && hasPermission('requisitions') && !user?.is_super_admin) {
       openCreateModal();
       router.replace('/requisitions');
     }
@@ -301,6 +302,7 @@ function RequisitionsPageInner() {
       const created = await requisitionsApi.create({
         type: form.type,
         item,
+        quantity: Number(form.quantity) || 1,
         project: form.project.trim(),
         urgency: form.urgency,
         justification: form.justification,
@@ -367,7 +369,7 @@ function RequisitionsPageInner() {
           ? 'Organisation-wide view of all asset requests and statuses. Stage approvals stay under Pending Approvals.'
           : 'Completed and rejected asset requisitions. Requests still awaiting approval or IT action stay under Pending Approvals.'
       }
-      actions={(
+      actions={user?.is_super_admin ? null : (
         <button type="button" className="btn btn-primary" onClick={() => openCreateModal()}>
           <i className="fa-solid fa-plus" /><span>New Request</span>
         </button>
@@ -698,6 +700,20 @@ function RequisitionsPageInner() {
           ) : null}
 
           <div className="form-group">
+            <label>Quantity *</label>
+            <input
+              type="number"
+              className="form-control"
+              required
+              min={1}
+              max={1000}
+              step={1}
+              value={form.quantity}
+              onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+            />
+          </div>
+
+          <div className="form-group">
             <label>Project Reference *</label>
             <input
               className="form-control"
@@ -822,6 +838,13 @@ function RequisitionsPageInner() {
             <div className="form-grid-2">
               <div className="form-group"><label>Type</label><input className="form-control" disabled value={detail.type || ''} /></div>
               <div className="form-group"><label>Item</label><input className="form-control" disabled value={detail.item || ''} /></div>
+            </div>
+            <div className="form-grid-2">
+              <div className="form-group"><label>Quantity</label><input className="form-control" disabled value={detail.quantity ?? 1} /></div>
+              <div className="form-group">
+                <label>Assigned</label>
+                <input className="form-control" disabled value={`${detail.assigned_count ?? 0} of ${detail.quantity ?? 1}`} />
+              </div>
             </div>
             <div className="form-group"><label>Justification</label><textarea className="form-control" disabled value={detail.justification || ''} /></div>
             {detail.attachment_url ? (
