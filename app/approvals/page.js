@@ -1022,6 +1022,9 @@ export default function ApprovalsPage() {
                 <span className="label">Line Manager</span>
                 <span className="val">
                   {detail.line_manager_name || detail.lineManagerName || '—'}
+                  {detail.line_manager_status && detail.line_manager_status !== 'Available'
+                    ? ` (${detail.line_manager_status})`
+                    : ''}
                 </span>
               </div>
               <div className="summary-item">

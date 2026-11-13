@@ -837,6 +837,14 @@ function TicketsPageInner() {
                 <strong>Assigned To:</strong>{' '}
                 <strong style={{ color: 'var(--primary)' }}>{detail.assigned_to || detail.assignedTo || 'Not assigned yet'}</strong>
               </div>
+              {detail.line_manager_name ? (
+                <div>
+                  <strong>Line Manager:</strong> {detail.line_manager_name}
+                  {detail.line_manager_status && detail.line_manager_status !== 'Available'
+                    ? ` (${detail.line_manager_status})`
+                    : ''}
+                </div>
+              ) : null}
               <div><span className={slaInfo(detail).cls}>{slaInfo(detail).text}</span></div>
               <div style={{ color: 'var(--text-muted)', fontSize: 12, width: '100%', marginTop: 4 }}>
                 Created: {detail.created_timestamp || detail.createdTimestamp

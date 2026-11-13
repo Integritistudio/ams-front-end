@@ -79,6 +79,7 @@ export const authApi = {
   logout: () => api('/api/auth/logout', { method: 'POST', loaderLabel: 'Signing out…' }),
   me: () => api('/api/auth/me', { silent: true }),
   updateProfile: (body) => api('/api/auth/profile', { method: 'PATCH', body }),
+  updateAvailability: (body) => api('/api/auth/availability', { method: 'PATCH', body }),
   forgotPassword: (email) => api('/api/auth/forgot-password', { method: 'POST', body: { email } }),
   resetPassword: (token, password) => api('/api/auth/reset-password', { method: 'POST', body: { token, password } }),
   setupPassword: (token, password) => api('/api/auth/setup-password', { method: 'POST', body: { token, password } }),

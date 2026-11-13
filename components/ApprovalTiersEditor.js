@@ -193,6 +193,7 @@ export default function ApprovalTiersEditor() {
                             disabled={busyId === t.id}
                             onClick={() => save(t.id)}
                             title="Save"
+                            aria-label={`Save ${t.role_name || 'approval'} tier`}
                           >
                             <i className="fa-solid fa-check" />
                           </button>{' '}
@@ -202,6 +203,7 @@ export default function ApprovalTiersEditor() {
                             disabled={busyId === t.id}
                             onClick={() => remove(t)}
                             title="Remove"
+                            aria-label={`Remove ${t.role_name || 'approval'} tier`}
                           >
                             <i className="fa-solid fa-trash" />
                           </button>
@@ -217,8 +219,9 @@ export default function ApprovalTiersEditor() {
           <form onSubmit={add} autoComplete="off" style={{ marginTop: 16 }}>
             <div className="form-grid-2">
               <div className="form-group">
-                <label>Add Approver Role</label>
+                <label htmlFor="new-tier-role">Add Approver Role</label>
                 <select
+                  id="new-tier-role"
                   className="form-control form-control-select"
                   value={newTier.role_id}
                   onChange={(e) => setNewTier((n) => ({ ...n, role_id: e.target.value }))}
@@ -228,8 +231,9 @@ export default function ApprovalTiersEditor() {
                 </select>
               </div>
               <div className="form-group">
-                <label>Limit (empty = unlimited)</label>
+                <label htmlFor="new-tier-limit">Limit (empty = unlimited)</label>
                 <input
+                  id="new-tier-limit"
                   type="number"
                   className="form-control"
                   min={1}
@@ -239,8 +243,9 @@ export default function ApprovalTiersEditor() {
                 />
               </div>
               <div className="form-group">
-                <label>Own request</label>
+                <label htmlFor="new-tier-self-approval">Own request</label>
                 <select
+                  id="new-tier-self-approval"
                   className="form-control form-control-select"
                   value={newTier.self_approval}
                   onChange={(e) => setNewTier((n) => ({ ...n, self_approval: e.target.value }))}

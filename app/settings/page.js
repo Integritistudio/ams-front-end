@@ -142,16 +142,18 @@ export default function SettingsPage() {
             <form onSubmit={applyColors} autoComplete="off">
               <div className="form-grid-2">
                 <div className="form-group">
-                  <label>Primary Color</label>
+                  <label htmlFor="settings-color-primary">Primary Color</label>
                   <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     <input
                       type="color"
                       value={form.color_primary}
                       onChange={(e) => syncColor('color_primary', e.target.value)}
+                      aria-label="Primary color picker"
                       style={{ width: 48, height: 38, borderRadius: 6, border: '1px solid var(--border-color)', background: 'transparent', cursor: 'pointer' }}
                     />
                     <input
                       type="text"
+                      id="settings-color-primary"
                       className="form-control"
                       value={form.color_primary}
                       onChange={(e) => syncColor('color_primary', e.target.value)}
@@ -159,16 +161,18 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <div className="form-group">
-                  <label>Accent Color</label>
+                  <label htmlFor="settings-color-accent">Accent Color</label>
                   <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     <input
                       type="color"
                       value={form.color_accent}
                       onChange={(e) => syncColor('color_accent', e.target.value)}
+                      aria-label="Accent color picker"
                       style={{ width: 48, height: 38, borderRadius: 6, border: '1px solid var(--border-color)', background: 'transparent', cursor: 'pointer' }}
                     />
                     <input
                       type="text"
+                      id="settings-color-accent"
                       className="form-control"
                       value={form.color_accent}
                       onChange={(e) => syncColor('color_accent', e.target.value)}
@@ -197,8 +201,9 @@ export default function SettingsPage() {
                 If a signed-in user has no activity (no clicks/typing and no successful API calls) for this many minutes, they are signed out and sent to the login page.
               </p>
               <div className="form-group" style={{ maxWidth: 280 }}>
-                <label>Inactivity timeout (minutes)</label>
+                <label htmlFor="settings-session-timeout">Inactivity timeout (minutes)</label>
                 <input
+                  id="settings-session-timeout"
                   type="number"
                   className="form-control"
                   min={1}
@@ -264,8 +269,9 @@ export default function SettingsPage() {
             >
               <div className="form-grid-2" style={{ marginBottom: 12 }}>
                 <div className="form-group">
-                  <label>Provider *</label>
+                  <label htmlFor="settings-ai-provider">Provider *</label>
                   <select
+                    id="settings-ai-provider"
                     className="form-control form-control-select"
                     value={aiProvider}
                     onChange={(e) => {
@@ -279,8 +285,9 @@ export default function SettingsPage() {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>Status</label>
+                  <label htmlFor="settings-ai-status">Status</label>
                   <input
+                    id="settings-ai-status"
                     className="form-control"
                     readOnly
                     value={
@@ -294,8 +301,9 @@ export default function SettingsPage() {
                 </div>
               </div>
               <div className="form-group">
-                <label>Model</label>
+                <label htmlFor="settings-ai-model">Model</label>
                 <input
+                  id="settings-ai-model"
                   className="form-control"
                   value={aiModel}
                   onChange={(e) => setAiModel(e.target.value)}
@@ -308,16 +316,17 @@ export default function SettingsPage() {
                 </small>
               </div>
               <div className="form-group">
-                <label>{aiStatus.key_set ? 'Replace API Key (leave blank to keep current)' : 'API Key *'}</label>
+                <label htmlFor="settings-ai-key">{aiStatus.key_set ? 'Replace API Key (leave blank to keep current)' : 'API Key *'}</label>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
+                    id="settings-ai-key"
                     className="form-control"
                     type={showAiKey ? 'text' : 'password'}
                     value={aiKey}
                     onChange={(e) => setAiKey(e.target.value)}
                     placeholder={aiProvider === 'gemini' ? 'AIza... or AQ....' : 'sk-...'}
                   />
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAiKey((v) => !v)}>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowAiKey((v) => !v)} aria-label={showAiKey ? 'Hide API key' : 'Show API key'}>
                     <i className={`fa-solid ${showAiKey ? 'fa-eye-slash' : 'fa-eye'}`} />
                   </button>
                 </div>
